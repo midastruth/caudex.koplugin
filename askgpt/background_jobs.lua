@@ -138,7 +138,7 @@ local function notify_done(ui, job)
           text        = text,
           ok_text     = _("View"),
           cancel_text = _("Later"),
-          timeout     = 8,
+          timeout     = 60,
           ok_callback = function()
             open_result_viewer(ui, job)
           end,

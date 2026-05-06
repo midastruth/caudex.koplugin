@@ -84,11 +84,7 @@ H.no_error("submit_summary with empty content does not crash", function()
 end)
 H.is_true("empty content: error shown", #errors_shown > 0)
 
--- ── Scenario 5: show_results_menu with a done job shows ButtonDialog ──────
-
--- Directly inject a done job into the module's internal _jobs table via
--- a successful (non-fork-failing) submit call wired to complete immediately.
--- We achieve this by re-requiring a fresh module with fork enabled + fast poll.
+-- ── Scenario 5: show_results_menu with done jobs is robust ───────────────
 
 H.reset("askgpt.background_jobs")
 spy.ffiutil._fork_fails = false
@@ -97,29 +93,39 @@ spy.ffiutil._fork_fails = false
 spy.UIManager.scheduleIn = function(_, delay, fn)
   if fn then fn() end
 end
--- ffiutil.readAllFromFD returns "" → job becomes "failed" (no output)
--- That's fine: we just want to confirm the poll fires and notify_done is called.
--- For a "done" job we need to inject directly.
-
--- Simplest approach: test show_results_menu by injecting a job through the
--- public submit path and relying on the poll to run synchronously.
--- Since readAllFromFD returns "" the job gets status="failed", not "done".
--- Therefore show_results_menu still sees no done jobs.
--- Verify it does NOT crash and shows the no-results message again.
+spy.ffiutil.readAllFromFD = function(_fd)
+  return '{"status":"done","text":"done result"}'
+end
+package.loaded["json"].decode = function(_raw)
+  return { status = "done", text = "done result" }
+end
 
 local BJ2 = require("askgpt.background_jobs")
+
+-- Regression: a non-string highlighted_text used to make Recent results crash
+-- while building snippets.
 spy.shown = {}
-BJ2.submit_summary(fake_ui, { content = "hello" }, "hello", "T", "A")
--- poll fires immediately: is_done=true, raw="" → status=failed → notify_done shows error
--- confirm show_results_menu still works afterwards
+BJ2.submit_summary(fake_ui, { content = "hello", highlighted_text = { text = "hello" } },
+                   "hello", "T", "A")
 spy.shown = {}
-H.no_error("show_results_menu after failed-poll job does not crash", function()
+H.no_error("show_results_menu with table highlighted_text does not crash", function()
   BJ2.show_results_menu(fake_ui)
 end)
-H.contains("no done jobs after failed poll: 暂无已完成",
-           (function()
-             for _, w in ipairs(spy.shown) do
-               if w._type == "InfoMessage" then return w.text or "" end
-             end
-             return ""
-           end)(), "暂无已完成")
+H.is_true("show_results_menu with done job shows ButtonDialog",
+          spy.shown[1] and spy.shown[1]._type == "ButtonDialog")
+H.contains("done job button uses extracted snippet",
+           spy.shown[1] and spy.shown[1].buttons[1][1].text or "", "hello")
+
+-- Regression: missing created_at in a done job could crash table.sort.
+local old_time = os.time
+os.time = function() return nil end
+BJ2.submit_summary(fake_ui, { content = "first" }, "first", "T", "A")
+os.time = function() return 123 end
+BJ2.submit_summary(fake_ui, { content = "second" }, "second", "T", "A")
+os.time = old_time
+spy.shown = {}
+H.no_error("show_results_menu with missing created_at does not crash", function()
+  BJ2.show_results_menu(fake_ui)
+end)
+H.is_true("show_results_menu after created_at regression shows ButtonDialog",
+          spy.shown[1] and spy.shown[1]._type == "ButtonDialog")

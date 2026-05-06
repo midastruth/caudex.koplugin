@@ -26,6 +26,57 @@ local POLL_GROWTH  = 1.5   -- 每轮乘以该系数
 
 -- ── 内部工具 ──────────────────────────────────────────────────────────────────
 
+local UTF8_CHAR_PATTERN = '[%z\1-\127\194-\253][\128-\191]*'
+
+local function safe_tostring(value)
+  if value == nil then return "" end
+  if type(value) == "string" then return value end
+  if type(value) == "table" then
+    if type(value.text) == "string" then return value.text end
+    if type(value.selection) == "string" then return value.selection end
+  end
+  local ok, text = pcall(tostring, value)
+  return ok and text or ""
+end
+
+local function trim_text(value)
+  return Util.trim(safe_tostring(value))
+end
+
+local function truncate_utf8(text, max_chars)
+  text = safe_tostring(text)
+  max_chars = max_chars or 36
+  local chars = {}
+  local count = 0
+  for char in text:gmatch(UTF8_CHAR_PATTERN) do
+    count = count + 1
+    if count <= max_chars then
+      chars[#chars + 1] = char
+    else
+      return table.concat(chars) .. "…"
+    end
+  end
+  return text
+end
+
+local function job_time(job)
+  return type(job) == "table" and type(job.created_at) == "number"
+      and job.created_at or 0
+end
+
+local function job_id(job)
+  return type(job) == "table" and type(job.id) == "number" and job.id or 0
+end
+
+local function job_kind_label(job)
+  if type(job) == "table" and job.kind == "summarize" then
+    return _("[摘要]")
+  elseif type(job) == "table" and job.kind == "analyze" then
+    return _("[分析]")
+  end
+  return _("[结果]")
+end
+
 local function new_job(kind, viewer_title, highlighted_text, doc_title, doc_author, doc_file_sha256)
   local id  = _next_id
   _next_id  = _next_id + 1
@@ -316,11 +367,15 @@ end
 function BackgroundJobs.show_results_menu(ui)
   local done_jobs = {}
   for _, job in pairs(_jobs) do
-    if job.status == "done" then
+    if type(job) == "table" and job.status == "done" and type(job.result_text) == "string" then
       table.insert(done_jobs, job)
     end
   end
-  table.sort(done_jobs, function(a, b) return a.created_at > b.created_at end)
+  table.sort(done_jobs, function(a, b)
+    local at, bt = job_time(a), job_time(b)
+    if at == bt then return job_id(a) > job_id(b) end
+    return at > bt
+  end)
 
   if #done_jobs == 0 then
     UIManager:show(InfoMessage:new {
@@ -333,16 +388,23 @@ function BackgroundJobs.show_results_menu(ui)
   local dlg
   local buttons = {}
   for _, job in ipairs(done_jobs) do
-    local kind_label = job.kind == "summarize" and _("[摘要]") or _("[分析]")
-    local snippet    = Util.trim(job.highlighted_text or "")
-    if #snippet > 36 then snippet = snippet:sub(1, 36) .. "…" end
-    local btn_text = kind_label .. " " .. (snippet ~= "" and snippet or _("(无文本)"))
+    local kind_label = job_kind_label(job)
+    local snippet    = truncate_utf8(trim_text(job.highlighted_text), 36)
+    local btn_text   = kind_label .. " " .. (snippet ~= "" and snippet or _("(无文本)"))
     local j = job   -- capture for closure
     table.insert(buttons, {{
       text     = btn_text,
       callback = function()
         UIManager:close(dlg)
-        open_result_viewer(ui, j)
+        local ok, err = pcall(function()
+          open_result_viewer(ui, j)
+        end)
+        if not ok then
+          UIManager:show(InfoMessage:new {
+            text    = _("打开 AskGPT 结果失败：") .. tostring(err),
+            timeout = 6,
+          })
+        end
       end,
     }})
   end

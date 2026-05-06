@@ -17,24 +17,6 @@ local function format_list(label, values)
   return label .. "\n- " .. table.concat(cleaned, "\n- ")
 end
 
-local function format_doc_info(args)
-  if not (args.title or args.author or args.file_sha256) then return nil end
-
-  local parts = {}
-  if args.title or args.author then
-    local doc_info = _("Document: ") .. (args.title or _("Unknown Title"))
-    if args.author and args.author ~= "" then
-      doc_info = doc_info .. _(" by ") .. args.author
-    end
-    table.insert(parts, doc_info)
-  end
-  if args.file_sha256 and args.file_sha256 ~= "" then
-    table.insert(parts, _("File SHA256: ") .. args.file_sha256)
-  end
-
-  return table.concat(parts, "\n")
-end
-
 -- args: highlighted_text, question, term, dictionary{}, language, title, author, file_sha256
 function Formatter.dictionary(args)
   local dictionary = args.dictionary or {}
@@ -75,8 +57,6 @@ function Formatter.dictionary(args)
   if args.language and args.language ~= "" and args.language ~= "auto" then
     table.insert(entry_parts, _("Language: ") .. args.language)
   end
-  local doc_info = format_doc_info(args)
-  if doc_info then table.insert(entry_parts, doc_info) end
 
   if #entry_parts > 0 then
     table.insert(segments, table.concat(entry_parts, "\n\n"))
@@ -109,9 +89,6 @@ function Formatter.summary(args)
       table.insert(segments, _("Language: ") .. details.language)
     end
   end
-
-  local doc_info = format_doc_info(args)
-  if doc_info then table.insert(segments, doc_info) end
 
   if #segments == 0 then return _("No summary available.") end
   return table.concat(segments, "\n\n")
@@ -150,9 +127,6 @@ function Formatter.analysis(args)
     end
   end
 
-  local doc_info = format_doc_info(args)
-  if doc_info then table.insert(segments, doc_info) end
-
   if #segments == 0 then return _("No analysis available.") end
   return table.concat(segments, "\n\n")
 end
@@ -187,9 +161,6 @@ function Formatter.ask(args)
       table.insert(segments, _("Sources:") .. "\n" .. table.concat(src_parts, "\n"))
     end
   end
-
-  local doc_info = format_doc_info(args)
-  if doc_info then table.insert(segments, doc_info) end
 
   if #segments == 0 then return _("No answer available.") end
   return table.concat(segments, "\n\n")

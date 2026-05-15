@@ -118,6 +118,79 @@ do
   H.eq("importEpub uses 300s timeout", last_https_timeout, 300)
 end
 
+-- EPUB import prefers multipart/form-data when a local filepath is supplied.
+do
+  local tmp = "/tmp/askgpt-ai-client-multipart.epub"
+  local f = io.open(tmp, "wb"); f:write("EPUBDATA"); f:close()
+  local seen_content_type, seen_body = nil, ""
+  http_lib = { TIMEOUT = 10, request = function(_) return nil, nil, nil end }
+  https_lib = {
+    TIMEOUT = 10,
+    request = function(params)
+      last_https_timeout = https_lib.TIMEOUT
+      seen_content_type = params.headers["Content-Type"]
+      while true do
+        local chunk = params.source()
+        if not chunk then break end
+        seen_body = seen_body .. chunk
+      end
+      return 1, 200, {}
+    end,
+  }
+  local AiClient = load_ai_client()
+  package.loaded["json"].decode = function() return { ok = true } end
+  local ok = pcall(AiClient.importEpub, { filepath = "", path = tmp, filename = "book.epub", book = { sha256 = "abc" } })
+  os.remove(tmp)
+  H.is_true("importEpub filepath succeeds", ok)
+  H.contains("importEpub filepath uses multipart", seen_content_type or "", "multipart/form-data")
+  H.contains("importEpub multipart has epub field", seen_body, "name=\"epub\"; filename=\"book.epub\"")
+  H.contains("importEpub multipart streams file bytes", seen_body, "EPUBDATA")
+  H.eq("importEpub filepath uses 300s timeout", last_https_timeout, 300)
+end
+
+-- Multipart upload closes the EPUB handle even if the transport fails before
+-- LuaSocket consumes the request source.
+do
+  local target = "/tmp/askgpt-close-on-early-fail.epub"
+  local original_io_open = io.open
+  local open_count, close_count = 0, 0
+  http_lib = { TIMEOUT = 10, request = function(_) return nil, nil, nil end }
+  https_lib = {
+    TIMEOUT = 10,
+    request = function(_)
+      return nil, "wantread", nil
+    end,
+  }
+  local AiClient = load_ai_client()
+  package.loaded["askgpt.util"].file_stat = function(path)
+    if path == target then return 8 end
+    return nil
+  end
+  io.open = function(path, mode)
+    if path == target and mode == "rb" then
+      open_count = open_count + 1
+      local closed = false
+      return {
+        read = function() return nil end,
+        close = function()
+          if not closed then
+            close_count = close_count + 1
+            closed = true
+          end
+          return true
+        end,
+      }
+    end
+    return original_io_open(path, mode)
+  end
+  local ok, err = pcall(AiClient.importEpub, { filepath = target, filename = "book.epub" })
+  io.open = original_io_open
+  H.is_false("importEpub early transport failure returns error", ok)
+  H.contains("importEpub early transport failure preserves transport detail", tostring(err), "wantread")
+  H.eq("importEpub opens source once per retry", open_count, AiClient.MAX_RETRY_ATTEMPTS)
+  H.eq("importEpub closes source once per retry", close_count, AiClient.MAX_RETRY_ATTEMPTS)
+end
+
 -- Backend EPUB download gets a long timeout too.
 do
   make_libs()

@@ -79,17 +79,20 @@ local function format_bytes(bytes)
   return string.format("%.1f %s", value, units[unit])
 end
 
-local function upload_payload_hint(context_label, request_body)
-  if context_label ~= "Book-Aware EPUB import" or type(request_body) ~= "string" then
-    return ""
-  end
-  local body_size = #request_body
-  if body_size < 4 * 1024 * 1024 then return "" end
-  local epub_size = math.floor(body_size * 3 / 4)
+local function upload_size_hint(context_label, body_size, epub_size)
+  if context_label ~= "Book-Aware EPUB import" then return "" end
+  body_size = tonumber(body_size)
+  if not body_size or body_size < 4 * 1024 * 1024 then return "" end
+  epub_size = tonumber(epub_size) or math.floor(body_size * 3 / 4)
   return string.format(
-    " (upload payload size: %s, EPUB roughly %s; if you use the public read.opensociety.eu.org backend, this usually means the EPUB is larger than its request-body limit. Use a smaller EPUB, raise the backend/proxy body-size limit, or switch to a backend that supports streaming/multipart upload.)",
+    " (upload payload size: %s, EPUB roughly %s; if you use the public read.opensociety.eu.org backend, this usually means the EPUB is larger than its request-body limit. Use a smaller EPUB, raise the backend/proxy body-size limit, or use a backend/proxy with a higher multipart body limit.)",
     format_bytes(body_size), format_bytes(epub_size)
   )
+end
+
+local function upload_payload_hint(context_label, request_body)
+  if type(request_body) ~= "string" then return "" end
+  return upload_size_hint(context_label, #request_body)
 end
 
 -- ── endpoint 解析 ─────────────────────────────────────────────────────────
@@ -283,9 +286,41 @@ local function http_request_with_retry(request_params, timeout)
     local req_copy  = Util.clone_table(request_params)
     req_copy.sink   = ltn12.sink.table(response_chunks)
 
-    local success, res, code, _, status_line = pcall(function()
-      return lib.request(req_copy)
-    end)
+    local success, res, code, headers, status_line
+    local close_source
+    if type(req_copy.source_factory) == "function" then
+      local source_ok, source_or_err, close_or_err = pcall(req_copy.source_factory)
+      req_copy.source_factory = nil
+      if source_ok then
+        req_copy.source = source_or_err
+        close_source = close_or_err
+        success, res, code, headers, status_line = pcall(function()
+          return lib.request(req_copy)
+        end)
+      else
+        success, res = false, source_or_err
+      end
+    else
+      success, res, code, headers, status_line = pcall(function()
+        return lib.request(req_copy)
+      end)
+    end
+
+    if type(close_source) == "function" then
+      local close_pcall_ok, close_ok, close_err = pcall(close_source)
+      if not close_pcall_ok or close_ok == nil or close_ok == false then
+        local close_message = "Request source close failed: " .. tostring(close_pcall_ok and close_err or close_ok)
+        if success and tonumber(code) == 200 then
+          success, res, code, status_line = false, close_message, nil, nil
+        elseif success and tonumber(code) then
+          status_line = tostring(status_line or "") .. " (" .. close_message .. ")"
+        elseif not success then
+          res = tostring(res) .. "; " .. close_message
+        else
+          success, res = false, close_message
+        end
+      end
+    end
 
     http.TIMEOUT  = prev_http_timeout
     https.TIMEOUT = prev_https_timeout
@@ -411,6 +446,141 @@ local function perform_json_get(endpoint, context_label, timeout)
   end
 
   return decode_json_response(context_label, response_chunks)
+end
+
+local function multipart_header_value(value)
+  value = tostring(value or "")
+  return value:gsub('["\\\r\n]', "_")
+end
+
+local function multipart_boundary()
+  return "----askgpt-koreader-" .. tostring(os.time()) .. "-" .. tostring(math.random(1000000, 9999999))
+end
+
+local function pick_epub_filepath(params)
+  for _, key in ipairs({ "filepath", "file_path", "path" }) do
+    local value = params[key]
+    if type(value) == "string" and value ~= "" then return value end
+  end
+  return nil
+end
+
+local function add_multipart_text_part(parts, boundary, name, value, content_type)
+  if value == nil then return end
+  value = tostring(value)
+  if value == "" then return end
+  local header = "--" .. boundary .. "\r\n"
+      .. "Content-Disposition: form-data; name=\"" .. multipart_header_value(name) .. "\"\r\n"
+  if content_type and content_type ~= "" then
+    header = header .. "Content-Type: " .. content_type .. "\r\n"
+  end
+  table.insert(parts, header .. "\r\n" .. value .. "\r\n")
+end
+
+local function multipart_file_source(filepath, preamble, epilogue)
+  return function()
+    local file, open_err = io.open(filepath, "rb")
+    if not file then error("Cannot open EPUB file: " .. tostring(open_err)) end
+    local phase = "preamble"
+    local closed = false
+
+    local function close_file()
+      if closed then return true end
+      closed = true
+      local ok, close_result, close_err = pcall(function()
+        return file:close()
+      end)
+      if not ok then return nil, close_result end
+      if close_result == nil or close_result == false then
+        return nil, close_err or "unknown error"
+      end
+      return true
+    end
+
+    local function source()
+      if phase == "preamble" then
+        phase = "file"
+        if preamble ~= "" then return preamble end
+      end
+      if phase == "file" then
+        local chunk = file:read(64 * 1024)
+        if chunk then return chunk end
+        local ok_close, close_err = close_file()
+        if not ok_close then error("Failed to close EPUB file: " .. tostring(close_err)) end
+        phase = "epilogue"
+      end
+      if phase == "epilogue" then
+        phase = "done"
+        if epilogue ~= "" then return epilogue end
+      end
+      local ok_close, close_err = close_file()
+      if not ok_close then error("Failed to close EPUB file: " .. tostring(close_err)) end
+      return nil
+    end
+
+    return source, close_file
+  end
+end
+
+local function perform_epub_multipart_import(params)
+  local filepath = pick_epub_filepath(params)
+  if type(filepath) ~= "string" or filepath == "" then
+    error("Book-Aware EPUB import requires filepath or content_base64.")
+  end
+
+  local file_size = Util.file_stat(filepath)
+  if not file_size then
+    error("Cannot stat EPUB file for multipart upload: " .. tostring(filepath))
+  end
+
+  local boundary = multipart_boundary()
+  local parts = {}
+  local book_json = json.encode(params.book or {})
+  add_multipart_text_part(parts, boundary, "book", book_json, "application/json; charset=utf-8")
+  add_multipart_text_part(parts, boundary, "force_extract", params.force_extract and "true" or nil)
+  add_multipart_text_part(parts, boundary, "markdown", params.markdown)
+  add_multipart_text_part(parts, boundary, "markdown_path", params.markdown_path)
+
+  local filename = params.filename or filepath:match("([^/\\]+)$") or "book.epub"
+  local file_header = "--" .. boundary .. "\r\n"
+      .. "Content-Disposition: form-data; name=\"epub\"; filename=\"" .. multipart_header_value(filename) .. "\"\r\n"
+      .. "Content-Type: application/epub+zip\r\n\r\n"
+  table.insert(parts, file_header)
+  local preamble = table.concat(parts)
+  local epilogue = "\r\n--" .. boundary .. "--\r\n"
+  local content_length = #preamble + file_size + #epilogue
+
+  local success, status_code, response_chunks = http_request_with_retry({
+    url     = resolve_import_epub_endpoint(),
+    method  = "POST",
+    headers = {
+      ["Accept"]         = "application/json",
+      ["Content-Type"]   = "multipart/form-data; boundary=" .. boundary,
+      ["Content-Length"] = tostring(content_length),
+    },
+    source_factory = multipart_file_source(filepath, preamble, epilogue),
+  }, resolve_import_epub_timeout())
+
+  local payload_hint = upload_size_hint("Book-Aware EPUB import", content_length, file_size)
+  if not success then
+    if status_code then
+      local friendly = extract_error_detail(response_chunks) or tostring(response_chunks or "")
+      error(string.format(
+        "Book-Aware EPUB import backend returned HTTP %s: %s%s",
+        tostring(status_code), friendly ~= "" and friendly or "unknown error", payload_hint
+      ))
+    end
+    error(string.format(
+      "Failed to contact Book-Aware EPUB import backend after %d attempts. Last error: %s%s",
+      MAX_RETRY_ATTEMPTS, tostring(response_chunks), payload_hint
+    ))
+  end
+
+  local decoded = decode_json_response("Book-Aware EPUB import", response_chunks)
+  if type(decoded) ~= "table" then
+    error("Book-Aware EPUB import response did not contain a JSON object.")
+  end
+  return decoded
 end
 
 -- ── 公开 API ─────────────────────────────────────────────────────────────
@@ -660,8 +830,16 @@ function AiClient.importEpub(params)
   if type(params) ~= "table" then
     error("Book-Aware EPUB import expects a parameter table.")
   end
+
+  -- Prefer backend multipart/form-data when a local file path is available:
+  -- it avoids base64's ~33% size overhead and does not keep the encoded EPUB
+  -- in Lua memory.  content_base64 remains for legacy/simple callers.
+  if pick_epub_filepath(params) then
+    return perform_epub_multipart_import(params)
+  end
+
   if type(params.content_base64) ~= "string" or params.content_base64 == "" then
-    error("Book-Aware EPUB import requires content_base64.")
+    error("Book-Aware EPUB import requires filepath or content_base64.")
   end
 
   local payload = {
@@ -671,6 +849,7 @@ function AiClient.importEpub(params)
   }
   if params.markdown and params.markdown ~= "" then payload.markdown = params.markdown end
   if params.markdown_path and params.markdown_path ~= "" then payload.markdown_path = params.markdown_path end
+  if params.force_extract ~= nil then payload.force_extract = params.force_extract and true or false end
 
   local decoded = perform_json_post(
     resolve_import_epub_endpoint(), payload,

@@ -1,6 +1,6 @@
 -- 将 KOReader 当前打开的 EPUB 上传到 Book-Aware 后端。
--- 注意：当前只上传原始 EPUB；除非后端支持 EPUB 转 Markdown，或另行补充 markdown，
--- /books/import/epub 返回的 index 可能为 nil，此时只能存档，不能整书检索。
+-- Book-Aware 现在会保存 EPUB、抽取 Markdown 并建立索引；客户端优先用
+-- multipart/form-data 直传文件，避免 JSON/base64 的体积和内存开销。
 local UIManager   = require("ui/uimanager")
 local InfoMessage = require("ui/widget/infomessage")
 local _           = require("gettext")
@@ -110,17 +110,12 @@ function BookUpload.upload_file(filepath)
     return
   end
 
-  show(_("后端没有本书，正在读取并上传 EPUB..."), 1)
-  local encoded, encode_err = Util.base64_file(filepath)
-  if not encoded then
-    show(_("读取/编码 EPUB 失败：") .. tostring(encode_err), 6)
-    return
-  end
+  show(_("后端没有本书，正在上传 EPUB..."), 1)
 
   local ok, result = pcall(AiClient.importEpub, {
-    filename       = basename(filepath),
-    content_base64 = encoded,
-    book           = book,
+    filename = basename(filepath),
+    filepath = filepath,
+    book     = book,
   })
   if not ok then
     show(_("上传到 Book-Aware 失败：") .. tostring(result), 8)
@@ -130,7 +125,7 @@ function BookUpload.upload_file(filepath)
   local indexed = type(result) == "table" and type(result.index) == "table"
   local suffix = indexed
       and _("\n已生成索引，可以直接使用 AskGPT。")
-      or _("\n已上传原始 EPUB，但后端未返回索引；需要后端转换/绑定 Markdown 后才能整书检索。")
+      or _("\n已上传原始 EPUB，但后端未返回索引。")
   show(_("Book-Aware 上传完成。") .. suffix, indexed and 5 or 8)
 end
 
@@ -167,18 +162,12 @@ function BookUpload.upload_current(ui)
     return
   end
 
-  show(_("后端没有本书，正在读取并上传当前 EPUB..."), 1)
-
-  local encoded, encode_err = Util.base64_file(filepath)
-  if not encoded then
-    show(_("读取/编码 EPUB 失败：") .. tostring(encode_err), 6)
-    return
-  end
+  show(_("后端没有本书，正在上传当前 EPUB..."), 1)
 
   local ok, result = pcall(AiClient.importEpub, {
-    filename       = basename(filepath),
-    content_base64 = encoded,
-    book           = book,
+    filename = basename(filepath),
+    filepath = filepath,
+    book     = book,
   })
   if not ok then
     show(_("上传到 Book-Aware 失败：") .. tostring(result), 8)
@@ -197,7 +186,7 @@ function BookUpload.upload_current(ui)
   local indexed = type(result) == "table" and type(result.index) == "table"
   local suffix = indexed
       and _("\n已生成索引，可以直接使用 AskGPT。")
-      or _("\n已上传原始 EPUB，但后端未返回索引；需要后端转换/绑定 Markdown 后才能整书检索。")
+      or _("\n已上传原始 EPUB，但后端未返回索引。")
   show(_("Book-Aware 上传完成。") .. suffix, indexed and 5 or 8)
 end
 

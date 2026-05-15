@@ -37,6 +37,29 @@ local function autoSyncEnabled()
            or cfg.book_aware_auto_sync == true)
 end
 
+local function placeAskGPTBeforeToc()
+  local ok, order = pcall(require, "ui/elements/reader_menu_order")
+  if not ok or type(order) ~= "table" or type(order.navi) ~= "table" then
+    return false
+  end
+
+  for i = #order.navi, 1, -1 do
+    if order.navi[i] == "askgpt" then
+      table.remove(order.navi, i)
+    end
+  end
+
+  local insert_at = 1
+  for i, item_id in ipairs(order.navi) do
+    if item_id == "table_of_contents" then
+      insert_at = i
+      break
+    end
+  end
+  table.insert(order.navi, insert_at, "askgpt")
+  return true
+end
+
 local function checkNetworkAndConfig()
   local config_valid, config_result = Config.validate()
   if not config_valid then
@@ -131,7 +154,7 @@ function AskGPT:init()
   end
 end
 
--- AskGPT 入口：统一放到 Tools/工具 菜单下的 AskGPT 子菜单
+-- AskGPT 入口：阅读器中放到 Navigation/导航 菜单的目录上方；文件管理器中仍放到 Tools/工具。
 function AskGPT:addToMainMenu(menu_items)
   local askgpt_items = {
     {
@@ -188,9 +211,15 @@ function AskGPT:addToMainMenu(menu_items)
     end,
   })
 
+  local sorting_hint = "tools"
+  if not isFileManagerUI(self.ui) then
+    placeAskGPTBeforeToc()
+    sorting_hint = "navi"
+  end
+
   menu_items.askgpt = {
     text = _("AskGPT"),
-    sorting_hint = "tools",
+    sorting_hint = sorting_hint,
     sub_item_table = askgpt_items,
   }
 end

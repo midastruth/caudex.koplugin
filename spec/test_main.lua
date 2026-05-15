@@ -25,6 +25,9 @@ package.loaded["askgpt.book_upload"] = {
 package.loaded["askgpt.book_sync"] = {
   sync_all = function() end,
 }
+package.loaded["ui/elements/reader_menu_order"] = {
+  navi = { "table_of_contents", "bookmarks" },
+}
 -- update_checker already set by mock_koreader
 
 local AskGPT = require("main")
@@ -126,7 +129,11 @@ end)
 
 H.is_true("addToMainMenu creates AskGPT submenu",
           menu_items.askgpt ~= nil)
-H.eq("AskGPT submenu is hinted into Tools", menu_items.askgpt.sorting_hint, "tools")
+H.eq("AskGPT submenu is hinted into Navigation", menu_items.askgpt.sorting_hint, "navi")
+H.eq("AskGPT is inserted before table of contents",
+     package.loaded["ui/elements/reader_menu_order"].navi[1], "askgpt")
+H.eq("Table of contents follows AskGPT",
+     package.loaded["ui/elements/reader_menu_order"].navi[2], "table_of_contents")
 H.is_true("AskGPT submenu has items",
           type(menu_items.askgpt.sub_item_table) == "table")
 H.eq("Reader AskGPT submenu has four items", #menu_items.askgpt.sub_item_table, 4)
@@ -162,5 +169,7 @@ end)
 H.is_true("FileManager addToMainMenu: AskGPT submenu present",
           fm_menu_items.askgpt ~= nil)
 H.eq("FileManager AskGPT submenu has three items", #fm_menu_items.askgpt.sub_item_table, 3)
+H.eq("FileManager AskGPT submenu is still hinted into Tools",
+     fm_menu_items.askgpt.sorting_hint, "tools")
 H.is_true("FileManager AskGPT submenu has no upload current book item",
           fm_menu_items.askgpt.sub_item_table[2].text ~= "Upload current book to Book-Aware")

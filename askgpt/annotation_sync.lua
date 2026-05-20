@@ -583,17 +583,31 @@ local function apply_tombstones(ui, sha256, deleted_ids)
   return removed
 end
 
--- Repair mode: pull all active backend highlights and recreate any local
+-- Repair mode: pull resolved backend highlights and recreate any local
 -- annotation missing its book-aware identity. This is intentionally separate
 -- from normal sync, which only consumes pending web highlights.
+--
+-- Repair deliberately requires the backend row to already carry native
+-- KOReader anchors (pos0/pos1). The normal sync path runs full candidate
+-- scoring + disambiguation before storing those anchors; reusing them here
+-- preserves that contract without re-running a weaker text search. Rows
+-- without anchors (typically pending/conflict/failed) are reported as
+-- failed rather than guessed at via findAllText.
 local function repair_missing(ui, sha256)
-  local result = AiClient.listHighlights(sha256)
+  -- Restrict to status="resolved": only those rows are guaranteed to have
+  -- pos0/pos1 already disambiguated by a prior sync.
+  local result = AiClient.listHighlights(sha256, "resolved")
   local highlights = (type(result) == "table" and type(result.highlights) == "table")
     and result.highlights or {}
 
   local repaired, skipped, failed = 0, 0, 0
   for _, hl in ipairs(highlights) do
-    local ok = pcall(function()
+    -- Per-row pcall is a scope boundary: one malformed/repair-incompatible
+    -- backend row must not abort the whole repair pass. Errors are logged
+    -- with the offending highlight id and counted as failed so operators
+    -- have a trail to investigate.
+    local hl_id = (type(hl) == "table" and type(hl.id) == "string") and hl.id or "<unknown>"
+    local ok, err = pcall(function()
       if type(hl) ~= "table" or type(hl.id) ~= "string" or hl.id == ""
           or type(hl.exact) ~= "string" or hl.exact == ""
           or hl.deleted_at then
@@ -609,19 +623,11 @@ local function repair_missing(ui, sha256)
       local pos0_xp = type(k.pos0) == "string" and k.pos0 or nil
       local pos1_xp = type(k.pos1) == "string" and k.pos1 or nil
 
-      -- Resolved KOReader rows already contain native anchors; use them
-      -- directly so repair does not depend on text search disambiguation.
-      if not pos0_xp or not pos1_xp then
-        local results = ui.document:findAllText(hl.exact, true, 8, 200, false)
-        if not results or #results == 0 then
-          failed = failed + 1
-          return
-        end
-        local winner = results[1]
-        pos0_xp = type(winner.start) == "string" and winner.start or nil
-        pos1_xp = type(winner["end"]) == "string" and winner["end"] or nil
-      end
-
+      -- Repair requires pre-disambiguated anchors. If they are missing,
+      -- fail loudly rather than fall back to findAllText, which would
+      -- bypass the scoring/margin checks used by the normal sync path and
+      -- could silently insert an annotation at the wrong location when
+      -- the exact text appears multiple times in the book.
       if not pos0_xp or not pos1_xp then
         failed = failed + 1
         return
@@ -631,7 +637,11 @@ local function repair_missing(ui, sha256)
       repaired = repaired + 1
     end)
 
-    if not ok then failed = failed + 1 end
+    if not ok then
+      logger.warn("AnnotationSync.repair_missing: row failed",
+        hl_id, tostring(err or "unknown"))
+      failed = failed + 1
+    end
   end
 
   return { repaired = repaired, skipped = skipped, failed = failed }
@@ -854,9 +864,11 @@ function AnnotationSync.push_changes_only(ui)
   return push_changes(ui, sha256, nil)
 end
 
--- Pull all active backend highlights and restore only those missing from the
+-- Pull resolved backend highlights and restore only those missing from the
 -- current KOReader annotation list. This fixes the "backend says resolved but
 -- local metadata is missing" case without changing normal pending-only sync.
+-- Rows in non-resolved states (pending/conflict/failed) are skipped because
+-- repair does not run text-search disambiguation.
 function AnnotationSync.repair_missing_highlights(ui)
   if not ui or not ui.document then
     error("AnnotationSync.repair_missing_highlights: no open document")

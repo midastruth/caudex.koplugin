@@ -1173,7 +1173,7 @@ do
   H.eq("T31 repaired=1", r.repaired, 1)
   H.eq("T31 failed=0", r.failed, 0)
   H.eq("T31 active list called once", #list_calls, 1)
-  H.eq("T31 list has no status filter", list_calls[1].status, nil)
+  H.eq("T31 list filters to resolved", list_calls[1].status, "resolved")
   H.eq("T31 list does not request tombstones", list_calls[1].include_deleted, nil)
   H.eq("T31 no backend PATCH for already-resolved row", #update_calls, 0)
   H.eq("T31 addItem called once", #ui.annotation._calls, 1)
@@ -1246,7 +1246,9 @@ do
     updateHighlight = function() error("repair should not mark backend rows failed") end,
   }
 
-  local ui = make_ui(function() return {} end)
+  -- findAllText must not be consulted: repair requires pre-disambiguated
+  -- anchors and must fail loudly when they are missing.
+  local ui = make_ui(function() error("repair must not call findAllText") end)
 
   local AS = require("askgpt.annotation_sync")
   local r = AS.repair_missing_highlights(ui)
@@ -1254,4 +1256,46 @@ do
   H.eq("T33 repaired=0", r.repaired, 0)
   H.eq("T33 failed=1", r.failed, 1)
   H.eq("T33 no annotation written", #ui.annotation.annotations, 0)
+end
+
+-- ── T34: repair never falls back to ambiguous text search
+--
+-- Even if findAllText would return multiple matches for the exact text,
+-- repair must not pick one — that would bypass the normal sync path's
+-- scoring/margin disambiguation and could silently anchor at the wrong
+-- location. The row is reported as failed and no annotation is written.
+
+do
+  reset_modules()
+  package.loaded["askgpt.ai_client"] = {
+    listHighlights = function()
+      return { highlights = {
+        {
+          id = "hl-repair-034",
+          exact = "the",
+          -- No koreader.pos0 / pos1: anchors were never resolved.
+          koreader = { status = "resolved" },
+        },
+      } }
+    end,
+    updateHighlight = function() error("repair should not patch backend rows") end,
+  }
+
+  local find_calls = 0
+  local ui = make_ui(function()
+    find_calls = find_calls + 1
+    return {
+      { start = "/body/p[1].0",  ["end"] = "/body/p[1].3"  },
+      { start = "/body/p[2].0",  ["end"] = "/body/p[2].3"  },
+      { start = "/body/p[3].0",  ["end"] = "/body/p[3].3"  },
+    }
+  end)
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.repair_missing_highlights(ui)
+
+  H.eq("T34 repaired=0", r.repaired, 0)
+  H.eq("T34 failed=1", r.failed, 1)
+  H.eq("T34 no annotation written", #ui.annotation.annotations, 0)
+  H.eq("T34 findAllText never called", find_calls, 0)
 end

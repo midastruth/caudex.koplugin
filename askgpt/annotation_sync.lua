@@ -27,6 +27,23 @@ local AnnotationSync = {}
 
 local PENDING_DELETES_SETTING = "bookaware_pending_deletes"
 
+-- ── server-authoritative sync constants ──────────────────────────────────
+--
+-- The plugin treats the backend as the source of truth: it pulls pending
+-- highlights AND reinstates any backend-resolved highlight that is missing
+-- locally (after a .sdr loss, device switch, book file replacement, etc.).
+-- Removals are the only destructive direction; when an unusually large batch
+-- of local annotations would be removed (because the backend tombstoned
+-- them), sync() refuses to proceed silently and asks the caller for explicit
+-- confirmation. Additions are never gated — they are what the user wants
+-- after switching devices.
+--
+-- The threshold is intentionally small. A typical sync touches 0–2 rows;
+-- anything above LARGE_REMOVAL_THRESHOLD is more likely a sign that local
+-- state diverged (e.g. wrong book file SHA mapped to the same backend row,
+-- or the user revoked highlights on the web in bulk) than a routine update.
+local LARGE_REMOVAL_THRESHOLD = 5
+
 -- ── color mapping ─────────────────────────────────────────────────────────
 
 -- Maps book-aware colors to KOReader annotation colors.
@@ -290,22 +307,47 @@ local function make_client_id(sha256, ann)
   return "koreader-" .. digest:sub(1, 32)
 end
 
--- Fetch the set of backend highlight IDs that have been tombstoned. Pulled
--- once and shared between push_new / push_changes / apply_tombstones so a
+-- Fetch the full highlight list (including tombstones) once per sync round.
+-- Shared between push_changes / apply_tombstones / reinstate_missing so a
 -- single sync round does not race against itself (e.g. PATCHing a record
--- that is about to be tombstoned).
-local function fetch_deleted_ids(sha256)
+-- that is about to be tombstoned, or reinstating a row that another phase
+-- already removed). Returns the raw array; callers partition as needed.
+local function fetch_all_with_deleted(sha256)
   local result = AiClient.listHighlights(sha256, nil, true)
-  local all_hls = (type(result) == "table" and type(result.highlights) == "table")
+  return (type(result) == "table" and type(result.highlights) == "table")
     and result.highlights or {}
+end
+
+-- Collect the set of tombstoned ids from a previously-fetched all_hls list.
+local function collect_deleted_ids(all_hls)
   local deleted_ids = {}
-  for _, hl in ipairs(all_hls) do
-    if type(hl.id) == "string"
+  for _, hl in ipairs(all_hls or {}) do
+    if type(hl) == "table" and type(hl.id) == "string"
         and type(hl.deleted_at) == "string" and hl.deleted_at ~= "" then
       deleted_ids[hl.id] = true
     end
   end
   return deleted_ids
+end
+
+-- Count local annotations bound to a tombstoned backend id. Used by the
+-- confirmation gate to decide whether a destructive removal is large enough
+-- to require explicit user confirmation.
+local function count_local_tombstones(ui, sha256, deleted_ids)
+  if type(ui.annotation) ~= "table"
+      or type(ui.annotation.annotations) ~= "table" then
+    return 0
+  end
+  if not deleted_ids or not next(deleted_ids) then return 0 end
+  local n = 0
+  for _, ann in ipairs(ui.annotation.annotations) do
+    local bid     = type(ann.bookaware_highlight_id) == "string" and ann.bookaware_highlight_id or nil
+    local ann_sha = type(ann.bookaware_sha256)       == "string" and ann.bookaware_sha256       or nil
+    if bid and ann_sha == sha256 and deleted_ids[bid] then
+      n = n + 1
+    end
+  end
+  return n
 end
 
 local function read_pending_deletes(ui)
@@ -540,10 +582,79 @@ local function push_changes(ui, sha256, skip_ids)
   return { pushed = pushed, failed = failed }
 end
 
--- ── Phase 3c: apply tombstones from book-aware ────────────────────────────
+-- ── Phase 3c: pull backend note/color metadata ───────────────────────────
+
+local function index_active_highlights(all_hls)
+  local by_id = {}
+  for _, hl in ipairs(all_hls or {}) do
+    if type(hl) == "table" and type(hl.id) == "string" and hl.id ~= ""
+        and not (type(hl.deleted_at) == "string" and hl.deleted_at ~= "") then
+      by_id[hl.id] = hl
+    end
+  end
+  return by_id
+end
+
+-- Pull backend note/color updates for already-bound local annotations.
+-- Field-level conflict rule:
+--   * if local did not change since the last sync, backend wins;
+--   * if local changed, leave it alone so push_changes() can upload it.
+-- This keeps normal KOReader edits working while still making web-side edits
+-- visible locally during the next sync.
+local function pull_backend_metadata(ui, sha256, active_by_id)
+  if type(ui.annotation) ~= "table"
+      or type(ui.annotation.annotations) ~= "table" then
+    return { pulled = 0, conflicts = 0 }
+  end
+  local pulled, conflicts = 0, 0
+  for _, ann in ipairs(ui.annotation.annotations) do
+    local bid     = type(ann.bookaware_highlight_id) == "string" and ann.bookaware_highlight_id or nil
+    local ann_sha = type(ann.bookaware_sha256)       == "string" and ann.bookaware_sha256       or nil
+    local hl = bid and ann_sha == sha256 and active_by_id and active_by_id[bid] or nil
+    if hl then
+      local field_pulled = false
+
+      local cur_note = type(ann.note) == "string" and ann.note or ""
+      local syn_note = type(ann.bookaware_synced_note) == "string" and ann.bookaware_synced_note or ""
+      local back_note = type(hl.note) == "string" and hl.note or ""
+      local local_note_changed = cur_note ~= syn_note
+      local backend_note_changed = back_note ~= syn_note
+      if backend_note_changed then
+        if not local_note_changed then
+          ann.note = back_note ~= "" and back_note or nil
+          ann.bookaware_synced_note = back_note
+          field_pulled = true
+        elseif cur_note ~= back_note then
+          conflicts = conflicts + 1
+        end
+      end
+
+      local cur_color = type(ann.color) == "string" and ann.color or ""
+      local syn_color = type(ann.bookaware_synced_color) == "string" and ann.bookaware_synced_color or ""
+      local back_color = (type(hl.color) == "string" and hl.color ~= "" and COLOR_MAP[hl.color])
+        and COLOR_MAP[hl.color] or nil
+      local local_color_changed = cur_color ~= syn_color and cur_color ~= ""
+      local backend_color_changed = back_color and back_color ~= syn_color
+      if backend_color_changed then
+        if not local_color_changed then
+          ann.color = back_color
+          ann.bookaware_synced_color = back_color
+          field_pulled = true
+        elseif cur_color ~= back_color then
+          conflicts = conflicts + 1
+        end
+      end
+
+      if field_pulled then pulled = pulled + 1 end
+    end
+  end
+  return { pulled = pulled, conflicts = conflicts }
+end
+
+-- ── Phase 3d: apply tombstones from book-aware ────────────────────────────
 
 -- Remove local annotations whose backend highlight has deleted_at set.
--- `deleted_ids` is the set previously fetched by fetch_deleted_ids(); pass
+-- `deleted_ids` is derived from the previously fetched backend state; pass
 -- it in to keep all phases of a sync round consistent.
 local function apply_tombstones(ui, sha256, deleted_ids)
   if type(ui.annotation) ~= "table"
@@ -583,9 +694,58 @@ local function apply_tombstones(ui, sha256, deleted_ids)
   return removed
 end
 
--- Repair mode: pull resolved backend highlights and recreate any local
--- annotation missing its book-aware identity. This is intentionally separate
--- from normal sync, which only consumes pending web highlights.
+-- Reinstate any backend-resolved highlight that is missing locally, using
+-- pre-disambiguated anchors stored on the backend row. Shared between the
+-- (legacy) repair_missing_highlights entry point and the new
+-- server-authoritative sync(). `all_hls` is the previously-fetched full
+-- list (including tombstones); rows with deleted_at, with no exact text,
+-- or with no pos0/pos1 are skipped/failed without falling back to ambiguous
+-- text search.
+local function reinstate_missing(ui, sha256, all_hls)
+  local repaired, skipped, failed = 0, 0, 0
+  for _, hl in ipairs(all_hls or {}) do
+    local hl_id = (type(hl) == "table" and type(hl.id) == "string") and hl.id or "<unknown>"
+    local ok, err = pcall(function()
+      if type(hl) ~= "table" or type(hl.id) ~= "string" or hl.id == ""
+          or type(hl.exact) ~= "string" or hl.exact == ""
+          or hl.deleted_at then
+        skipped = skipped + 1
+        return
+      end
+      local k = type(hl.koreader) == "table" and hl.koreader or {}
+      -- Only consider rows the backend already marked resolved: those are
+      -- the only rows guaranteed to have pos0/pos1 anchors that survived
+      -- the normal sync path's scoring/margin checks.
+      if k.status ~= "resolved" then
+        skipped = skipped + 1
+        return
+      end
+      if find_synced_annotation(ui, sha256, hl.id) then
+        skipped = skipped + 1
+        return
+      end
+      local pos0_xp = type(k.pos0) == "string" and k.pos0 or nil
+      local pos1_xp = type(k.pos1) == "string" and k.pos1 or nil
+      if not pos0_xp or not pos1_xp then
+        failed = failed + 1
+        return
+      end
+      write_annotation(ui, hl, pos0_xp, pos1_xp, sha256)
+      repaired = repaired + 1
+    end)
+    if not ok then
+      logger.warn("AnnotationSync.reinstate_missing: row failed",
+        hl_id, tostring(err or "unknown"))
+      failed = failed + 1
+    end
+  end
+  return { repaired = repaired, skipped = skipped, failed = failed }
+end
+
+-- Explicit repair mode: pull resolved backend highlights and recreate any
+-- local annotation missing its book-aware identity. Normal sync now performs
+-- the same backend-authoritative reinstatement automatically; this entry
+-- point is kept for callers/tests that want to run only the repair pass.
 --
 -- Repair deliberately requires the backend row to already carry native
 -- KOReader anchors (pos0/pos1). The normal sync path runs full candidate
@@ -599,63 +759,25 @@ local function repair_missing(ui, sha256)
   local result = AiClient.listHighlights(sha256, "resolved")
   local highlights = (type(result) == "table" and type(result.highlights) == "table")
     and result.highlights or {}
-
-  local repaired, skipped, failed = 0, 0, 0
-  for _, hl in ipairs(highlights) do
-    -- Per-row pcall is a scope boundary: one malformed/repair-incompatible
-    -- backend row must not abort the whole repair pass. Errors are logged
-    -- with the offending highlight id and counted as failed so operators
-    -- have a trail to investigate.
-    local hl_id = (type(hl) == "table" and type(hl.id) == "string") and hl.id or "<unknown>"
-    local ok, err = pcall(function()
-      if type(hl) ~= "table" or type(hl.id) ~= "string" or hl.id == ""
-          or type(hl.exact) ~= "string" or hl.exact == ""
-          or hl.deleted_at then
-        skipped = skipped + 1
-        return
-      end
-      if find_synced_annotation(ui, sha256, hl.id) then
-        skipped = skipped + 1
-        return
-      end
-
-      local k = type(hl.koreader) == "table" and hl.koreader or {}
-      local pos0_xp = type(k.pos0) == "string" and k.pos0 or nil
-      local pos1_xp = type(k.pos1) == "string" and k.pos1 or nil
-
-      -- Repair requires pre-disambiguated anchors. If they are missing,
-      -- fail loudly rather than fall back to findAllText, which would
-      -- bypass the scoring/margin checks used by the normal sync path and
-      -- could silently insert an annotation at the wrong location when
-      -- the exact text appears multiple times in the book.
-      if not pos0_xp or not pos1_xp then
-        failed = failed + 1
-        return
-      end
-
-      write_annotation(ui, hl, pos0_xp, pos1_xp, sha256)
-      repaired = repaired + 1
-    end)
-
-    if not ok then
-      logger.warn("AnnotationSync.repair_missing: row failed",
-        hl_id, tostring(err or "unknown"))
-      failed = failed + 1
-    end
-  end
-
-  return { repaired = repaired, skipped = skipped, failed = failed }
+  return reinstate_missing(ui, sha256, highlights)
 end
 
 -- ── public API ────────────────────────────────────────────────────────────
 
 -- Sync web highlights for the currently open book.
--- Phase 1/2: pull pending highlights, locate in document, write native annotations.
--- Phase 3a: push local note/color changes back to book-aware.
--- Phase 3b: apply tombstones — remove annotations deleted via reader-web.
--- Returns { resolved, conflict, failed, pushed, created, removed } counts.
+-- Server-authoritative model:
+--   * pull pending web highlights and resolve them into KOReader annotations;
+--   * reinstate backend-resolved highlights missing from the local .sdr;
+--   * push KOReader-created highlights / note-color edits back to backend;
+--   * apply backend tombstones locally, unless the deletion batch is large.
+--
+-- opts.force_large_removal / opts.force: bypass the large-removal guard.
+-- If a large destructive delete would be applied without force, raises a
+-- table error: { bookaware_confirmation_required=true, reason="large_removal", ... }.
+-- Returns { resolved, repaired, conflict, failed, pushed, created, removed } counts.
 -- Raises on fatal errors (no document, can't determine SHA256, network failure).
-function AnnotationSync.sync(ui)
+function AnnotationSync.sync(ui, opts)
+  opts = opts or {}
   if not ui or not ui.document then
     error("AnnotationSync.sync: no open document")
   end
@@ -779,10 +901,25 @@ function AnnotationSync.sync(ui)
     ui.doc_settings:saveSetting("annotations", ui.annotation.annotations)
   end
 
-  -- Fetch tombstones once so push_new / push_changes / apply_tombstones all
-  -- agree about which ids are dead. If this fails the whole sync must fail —
-  -- otherwise we'd silently miss web-side deletes.
-  local deleted_ids = fetch_deleted_ids(sha256)
+  -- Fetch backend state once so push_new / push_changes / apply_tombstones /
+  -- reinstate_missing all agree about which ids are active/dead. If this
+  -- fails the whole sync must fail — otherwise we'd silently miss web-side
+  -- deletes or resolved highlights that should be reinstated locally.
+  local all_hls = fetch_all_with_deleted(sha256)
+  local deleted_ids = collect_deleted_ids(all_hls)
+  local active_by_id = index_active_highlights(all_hls)
+
+  local pending_removals = count_local_tombstones(ui, sha256, deleted_ids)
+  local threshold = tonumber(opts.large_removal_threshold) or LARGE_REMOVAL_THRESHOLD
+  if pending_removals > threshold
+      and not (opts.force_large_removal or opts.force) then
+    error({
+      bookaware_confirmation_required = true,
+      reason = "large_removal",
+      pending_removals = pending_removals,
+      threshold = threshold,
+    })
+  end
 
   -- ── Phase 3a: push new KOReader-originated highlights ──────────────────
   -- Run *before* push_changes so freshly assigned backend ids are visible to
@@ -794,17 +931,30 @@ function AnnotationSync.sync(ui)
   -- backend row (matching user intent). See test T17 in book-aware.
   local new_result = push_new(ui, sha256)
 
-  -- ── Phase 3b: push local note/color changes ────────────────────────────
+  -- ── Phase 3b: pull web-side note/color edits for already-bound rows ────
+  local pull_result = pull_backend_metadata(ui, sha256, active_by_id)
+
+  -- ── Phase 3c: push local note/color changes ────────────────────────────
   local push_result = push_changes(ui, sha256, deleted_ids)
 
-  -- ── Phase 3c: apply tombstones from book-aware ─────────────────────────
+  -- ── Phase 3d: apply tombstones from book-aware ─────────────────────────
   local removed = apply_tombstones(ui, sha256, deleted_ids)
 
-  -- Save id/synced_color/note fields updated by push_new / push_changes, and
-  -- deletions applied by tombstones. (Resolved annotations are saved earlier,
-  -- before fetching tombstones, so a later network failure cannot leave the
+  -- ── Phase 3e: backend-authoritative repair/reinstate ───────────────────
+  -- The backend is now the source of truth. If a row is resolved remotely but
+  -- absent from the local .sdr (device switch, sidecar loss, old plugin did
+  -- not save bookaware_highlight_id, etc.), restore it using the backend's
+  -- previously-disambiguated KOReader anchors.
+  local repair_result = reinstate_missing(ui, sha256, all_hls)
+
+  -- Save id/synced_color/note fields updated by push_new / push_changes,
+  -- deletions applied by tombstones, and backend-resolved highlights
+  -- reinstated locally. (Resolved annotations are saved earlier, before
+  -- fetching backend state, so a later network failure cannot leave the
   -- backend marked resolved while the local sidecar misses the annotation.)
-  if (new_result.created > 0 or push_result.pushed > 0 or removed > 0)
+  if (new_result.created > 0 or push_result.pushed > 0 or removed > 0
+        or (pull_result.pulled or 0) > 0
+        or (repair_result.repaired or 0) > 0)
       and ui.doc_settings
       and type(ui.doc_settings.saveSetting) == "function" then
     ui.doc_settings:saveSetting("annotations", ui.annotation.annotations)
@@ -814,13 +964,18 @@ function AnnotationSync.sync(ui)
     + (push_result.failed or 0)
     + (new_result.failed or 0)
     + (delete_result.failed or 0)
+    + (repair_result.failed or 0)
   return {
     resolved = resolved,
+    repaired = repair_result.repaired or 0,
     conflict = conflict,
     failed   = total_failed,
     pushed   = push_result.pushed,
+    pulled   = pull_result.pulled or 0,
+    metadata_conflicts = pull_result.conflicts or 0,
     created  = new_result.created,
     removed  = removed,
+    pending_removals = pending_removals,
     deleted  = delete_result.deleted or 0,
     -- Per-annotation failure details from push_new (client_id, exact, message).
     -- Surfaced so callers can show "upload failed for N highlight(s): ...".
@@ -865,10 +1020,10 @@ function AnnotationSync.push_changes_only(ui)
 end
 
 -- Pull resolved backend highlights and restore only those missing from the
--- current KOReader annotation list. This fixes the "backend says resolved but
--- local metadata is missing" case without changing normal pending-only sync.
--- Rows in non-resolved states (pending/conflict/failed) are skipped because
--- repair does not run text-search disambiguation.
+-- current KOReader annotation list. Normal sync already does this as part of
+-- the backend-authoritative path; this function remains as an explicit
+-- repair-only entry point. Rows in non-resolved states (pending/conflict/failed)
+-- are skipped because repair does not run text-search disambiguation.
 function AnnotationSync.repair_missing_highlights(ui)
   if not ui or not ui.document then
     error("AnnotationSync.repair_missing_highlights: no open document")

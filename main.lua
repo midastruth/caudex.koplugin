@@ -2,6 +2,7 @@ local Device       = require("device")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local NetworkMgr   = require("ui/network/manager")
 local InfoMessage  = require("ui/widget/infomessage")
+local ConfirmBox   = require("ui/widget/confirmbox")
 local UIManager    = require("ui/uimanager")
 local _ = require("gettext")
 
@@ -282,6 +283,77 @@ function AskGPT:onCloseDocument()
   pushWebHighlightChanges(self, "close")
 end
 
+local function showAnnotationSyncResult(result)
+  local summary = string.format(
+    _("Web 高亮同步完成。\n同步：%d  恢复：%d  拉取：%d\n上传：%d  推送：%d  删除：%d\n冲突：%d  失败：%d"),
+    result.resolved or 0, result.repaired or 0, result.pulled or 0,
+    result.created or 0, result.pushed or 0, result.removed or 0,
+    (result.conflict or 0) + (result.metadata_conflicts or 0), result.failed or 0
+  )
+  -- Surface per-annotation upload failure detail so the user can diagnose
+  -- without diving into crash.log. Limit to the first few entries to keep
+  -- the toast readable.
+  local create_errors = type(result.create_errors) == "table" and result.create_errors or {}
+  if #create_errors > 0 then
+    local lines = { summary, "", _("上传失败详情：") }
+    local max_lines = 3
+    for i = 1, math.min(#create_errors, max_lines) do
+      local e = create_errors[i]
+      local exact_snip = (type(e.exact) == "string" and e.exact ~= "")
+        and ("\"" .. e.exact .. "\"") or "?"
+      table.insert(lines, string.format("%d. %s\n   %s",
+        i, exact_snip, tostring(e.message or ""):sub(1, 200)))
+    end
+    if #create_errors > max_lines then
+      table.insert(lines, string.format(_("…及其他 %d 条"),
+        #create_errors - max_lines))
+    end
+    summary = table.concat(lines, "\n")
+  end
+  UIManager:show(InfoMessage:new {
+    text    = summary,
+    timeout = (result.failed or 0) > 0 and 12 or 5,
+  })
+end
+
+local function isAnnotationSyncConfirmationRequired(err)
+  return type(err) == "table" and err.bookaware_confirmation_required == true
+end
+
+local runManualAnnotationSync
+runManualAnnotationSync = function(self, force)
+  UIManager:show(InfoMessage:new {
+    text    = force and _("正在按后端为准强制同步 Web 高亮...") or _("正在同步 Web 高亮..."),
+    timeout = 1,
+  })
+  local opts = force and { force = true } or nil
+  local ok, result = pcall(AnnotationSync.sync, self.ui, opts)
+  if ok then
+    showAnnotationSyncResult(result)
+    return
+  end
+
+  if isAnnotationSyncConfirmationRequired(result) then
+    local pending_removals = tonumber(result.pending_removals or 0) or 0
+    UIManager:show(ConfirmBox:new {
+      text = string.format(
+        _("后端同步将删除本地 %d 条高亮。\n\n后端将作为高亮同步依据；如果你确认这些高亮已在后端删除，继续同步。"),
+        pending_removals),
+      ok_text = _("继续同步"),
+      cancel_text = _("取消"),
+      ok_callback = function()
+        runManualAnnotationSync(self, true)
+      end,
+    })
+    return
+  end
+
+  UIManager:show(InfoMessage:new {
+    text    = _("Web 高亮同步失败：") .. tostring(result),
+    timeout = 8,
+  })
+end
+
 -- AskGPT 入口：阅读器中放到 Navigation/导航 菜单的目录上方；文件管理器中仍放到 Tools/工具。
 function AskGPT:addToMainMenu(menu_items)
   local askgpt_items = {
@@ -329,47 +401,7 @@ function AskGPT:addToMainMenu(menu_items)
       callback = function()
         if not checkNetworkAndConfig() then return end
         NetworkMgr:runWhenOnline(function()
-          UIManager:show(InfoMessage:new {
-            text    = _("正在同步 Web 高亮..."),
-            timeout = 1,
-          })
-          local ok, result = pcall(AnnotationSync.sync, self.ui)
-          if not ok then
-            UIManager:show(InfoMessage:new {
-              text    = _("Web 高亮同步失败：") .. tostring(result),
-              timeout = 8,
-            })
-          else
-            local summary = string.format(
-              _("Web 高亮同步完成。\n同步：%d  上传：%d  推送：%d\n删除：%d  冲突：%d  失败：%d"),
-              result.resolved, result.created or 0, result.pushed or 0,
-              result.removed or 0, result.conflict, result.failed
-            )
-            -- Surface per-annotation upload failure detail so the user can
-            -- diagnose without diving into crash.log. Limit to the first
-            -- few entries to keep the toast readable.
-            local create_errors = type(result.create_errors) == "table" and result.create_errors or {}
-            if #create_errors > 0 then
-              local lines = { summary, "", _("上传失败详情：") }
-              local max_lines = 3
-              for i = 1, math.min(#create_errors, max_lines) do
-                local e = create_errors[i]
-                local exact_snip = (type(e.exact) == "string" and e.exact ~= "")
-                  and ("\"" .. e.exact .. "\"") or "?"
-                table.insert(lines, string.format("%d. %s\n   %s",
-                  i, exact_snip, tostring(e.message or ""):sub(1, 200)))
-              end
-              if #create_errors > max_lines then
-                table.insert(lines, string.format(_("…及其他 %d 条"),
-                  #create_errors - max_lines))
-              end
-              summary = table.concat(lines, "\n")
-            end
-            UIManager:show(InfoMessage:new {
-              text    = summary,
-              timeout = (result.failed or 0) > 0 and 12 or 5,
-            })
-          end
+          runManualAnnotationSync(self, false)
         end)
       end,
     })

@@ -1299,3 +1299,165 @@ do
   H.eq("T34 no annotation written", #ui.annotation.annotations, 0)
   H.eq("T34 findAllText never called", find_calls, 0)
 end
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- Server-authoritative normal sync
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── T35: normal sync reinstates backend-resolved highlights missing locally
+
+do
+  reset_modules()
+  local list_calls = {}
+  package.loaded["askgpt.ai_client"] = {
+    listHighlights = function(_sha, status, include_deleted)
+      table.insert(list_calls, { status = status, include_deleted = include_deleted })
+      if include_deleted then
+        return { highlights = {
+          {
+            id = "hl-sync-repair-035",
+            exact = "resolved row missing from sidecar",
+            color = "purple",
+            note = "restore me",
+            koreader = {
+              status = "resolved",
+              pos0 = "/body/p[35].0",
+              pos1 = "/body/p[35].33",
+            },
+          },
+        } }
+      end
+      return { highlights = {} }
+    end,
+    updateHighlight = function() return {} end,
+    createHighlight = function() error("no local-only annotations in T35") end,
+    deleteHighlight = function() return {} end,
+  }
+
+  local find_calls = 0
+  local ui = make_ui(function()
+    find_calls = find_calls + 1
+    return {}
+  end)
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.sync(ui)
+
+  H.eq("T35 repaired=1 during normal sync", r.repaired, 1)
+  H.eq("T35 failed=0", r.failed, 0)
+  H.eq("T35 annotation restored", #ui.annotation.annotations, 1)
+  H.eq("T35 restored backend id", ui.annotation.annotations[1].bookaware_highlight_id, "hl-sync-repair-035")
+  H.eq("T35 restored note", ui.annotation.annotations[1].note, "restore me")
+  H.eq("T35 findAllText not used for resolved repair", find_calls, 0)
+  H.eq("T35 annotations saved", ui._settings.annotations, ui.annotation.annotations)
+  H.eq("T35 include_deleted fetch happened", list_calls[2] and list_calls[2].include_deleted, true)
+end
+
+-- ── T36: large backend tombstone batch requires explicit confirmation
+
+do
+  reset_modules()
+  local all_with_deleted = {}
+  for i = 1, 6 do
+    table.insert(all_with_deleted, {
+      id = "hl-large-del-036-" .. i,
+      exact = "deleted row " .. i,
+      deleted_at = "2026-01-01T00:00:00Z",
+    })
+  end
+  local _, _, _, deletes = make_ai_client_p3({}, all_with_deleted)
+  local ui = make_ui(function() return {} end)
+  for i = 1, 6 do
+    table.insert(ui.annotation.annotations, {
+      bookaware_highlight_id = "hl-large-del-036-" .. i,
+      bookaware_sha256 = SHA,
+      text = "local row " .. i,
+    })
+  end
+
+  local AS = require("askgpt.annotation_sync")
+  local ok, err = pcall(AS.sync, ui)
+
+  H.is_false("T36 sync refuses large removal without force", ok)
+  H.is_true("T36 error is confirmation table",
+    type(err) == "table" and err.bookaware_confirmation_required == true)
+  H.eq("T36 pending_removals=6", err and err.pending_removals, 6)
+  H.eq("T36 local annotations not removed", #ui.annotation.annotations, 6)
+  H.eq("T36 no backend deletes attempted", #deletes, 0)
+end
+
+-- ── T37: force option applies the same large tombstone batch
+
+do
+  reset_modules()
+  local all_with_deleted = {}
+  for i = 1, 6 do
+    table.insert(all_with_deleted, {
+      id = "hl-large-del-037-" .. i,
+      exact = "deleted row " .. i,
+      deleted_at = "2026-01-01T00:00:00Z",
+    })
+  end
+  local _, _, _, deletes = make_ai_client_p3({}, all_with_deleted)
+  local ui = make_ui(function() return {} end)
+  for i = 1, 6 do
+    table.insert(ui.annotation.annotations, {
+      bookaware_highlight_id = "hl-large-del-037-" .. i,
+      bookaware_sha256 = SHA,
+      text = "local row " .. i,
+    })
+  end
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.sync(ui, { force = true })
+
+  H.eq("T37 removed=6 with force", r.removed, 6)
+  H.eq("T37 pending_removals reported", r.pending_removals, 6)
+  H.eq("T37 local annotations removed", #ui.annotation.annotations, 0)
+  H.eq("T37 no backend deletes attempted", #deletes, 0)
+end
+
+-- ── T38: normal sync pulls backend note/color when local is clean
+
+do
+  reset_modules()
+  package.loaded["askgpt.ai_client"] = {
+    listHighlights = function(_sha, _status, include_deleted)
+      if include_deleted then
+        return { highlights = {
+          {
+            id = "hl-metadata-038",
+            exact = "metadata row",
+            color = "blue",
+            note = "web-updated note",
+            koreader = { status = "resolved", pos0 = "/body/p[38].0", pos1 = "/body/p[38].12" },
+          },
+        } }
+      end
+      return { highlights = {} }
+    end,
+    updateHighlight = function() error("clean local row must not push back") end,
+    createHighlight = function() error("no create in T38") end,
+    deleteHighlight = function() return {} end,
+  }
+
+  local ui = make_ui(function() return {} end)
+  table.insert(ui.annotation.annotations, {
+    bookaware_highlight_id = "hl-metadata-038",
+    bookaware_sha256       = SHA,
+    bookaware_synced_color = "yellow",
+    bookaware_synced_note  = "old note",
+    color                  = "yellow",
+    note                   = "old note",
+  })
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.sync(ui)
+
+  H.eq("T38 pulled=1", r.pulled, 1)
+  H.eq("T38 pushed=0", r.pushed, 0)
+  H.eq("T38 note pulled", ui.annotation.annotations[1].note, "web-updated note")
+  H.eq("T38 color pulled", ui.annotation.annotations[1].color, "blue")
+  H.eq("T38 synced note baseline updated", ui.annotation.annotations[1].bookaware_synced_note, "web-updated note")
+  H.eq("T38 annotations saved", ui._settings.annotations, ui.annotation.annotations)
+end

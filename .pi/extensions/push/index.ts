@@ -22,6 +22,7 @@ const USER_MESSAGE = "Please run the full /push workflow (add → commit → pus
 //   6. Wait for GitHub Actions runs triggered by the push (gh run watch); abort on failure.
 //   7. Build the release asset (KOReader-style zip when applicable).
 //   8. Create a GitHub release for the new HEAD.
+//   9. Wait for release-triggered GitHub Actions runs (event=release) to finish; abort on failure.
 //
 // Executed through Pi's normal built-in bash tool pipeline. On any failure the
 // extension restores the user's selected model and asks it to explain the failure.
@@ -29,7 +30,7 @@ const PUSH_COMMAND = String.raw`set -euo pipefail
 
 step() { printf '\n=== %s ===\n' "$*"; }
 
-step "1/8 Check git worktree and current branch"
+step "1/9 Check git worktree and current branch"
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "Error: not inside a Git worktree." >&2
   exit 1
@@ -60,12 +61,12 @@ echo "Worktree: $ROOT"
 echo "Origin:   $REMOTE_URL"
 echo "Branch:   $BRANCH"
 
-step "2/8 git add -A"
+step "2/9 git add -A"
 git add -A
 echo "Status after add:"
 git status --short || true
 
-step "3/8 Generate commit message"
+step "3/9 Generate commit message"
 # Detect whether we actually have staged changes.
 if git diff --cached --quiet; then
   HAS_STAGED=0
@@ -166,20 +167,20 @@ else
   echo "No staged changes; will skip git commit."
 fi
 
-step "4/8 git commit"
+step "4/9 git commit"
 if [ "$HAS_STAGED" = "1" ]; then
   printf '%s\n' "$COMMIT_MSG" | git commit -F -
 else
   echo "Skipped (working tree clean)."
 fi
 
-step "5/8 git push origin HEAD:$BRANCH"
+step "5/9 git push origin HEAD:$BRANCH"
 git push origin "HEAD:$BRANCH"
 COMMIT_FULL="$(git rev-parse HEAD)"
 COMMIT_SHORT="$(git rev-parse --short HEAD)"
 echo "Pushed commit: $COMMIT_FULL"
 
-step "6/8 Wait for GitHub Actions"
+step "6/9 Wait for GitHub Actions"
 if ! command -v gh >/dev/null 2>&1; then
   echo "Warning: GitHub CLI (gh) not installed; skipping Actions wait." >&2
   SKIP_CI=1
@@ -225,7 +226,7 @@ if [ "$SKIP_CI" != "1" ]; then
   fi
 fi
 
-step "7/8 Build release asset"
+step "7/9 Build release asset"
 if ! command -v gh >/dev/null 2>&1; then
   echo "Error: GitHub CLI (gh) is required to create the release." >&2
   exit 1
@@ -320,7 +321,11 @@ Automated release for commit $COMMIT_FULL.
 EOF
 fi
 
-step "8/8 Create GitHub release"
+step "8/9 Create GitHub release"
+# Record a timestamp just before creating the release so we can filter out any
+# pre-existing release-triggered runs for the same commit (re-runs, manual
+# dispatches, etc.) when watching in step 9 of 9.
+RELEASE_START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 if [ -n "$ASSET_PATH" ]; then
   echo "Creating release $TAG with asset $ASSET_NAME..."
   gh release create "$TAG" "$ASSET_PATH" --target "$BRANCH" --title "$TAG" --notes-file "$NOTES_PATH"
@@ -334,6 +339,57 @@ if [ -n "$RELEASE_URL" ]; then
   echo "Release created: $RELEASE_URL"
 else
   echo "Release created: $TAG"
+fi
+
+step "9/9 Wait for release-triggered workflows"
+# Release-triggered runs (event=release) are scheduled by GitHub after
+# gh release create returns. They share the same head_sha as the pushed
+# commit but use event=release, so we can filter precisely. Runs created
+# before RELEASE_START_TS belong to earlier releases of the same commit and
+# are ignored.
+if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+  echo "gh unavailable; skipping release CI wait."
+elif [ ! -d .github/workflows ] || [ -z "$(ls -A .github/workflows 2>/dev/null)" ]; then
+  echo "No .github/workflows present; skipping release CI wait."
+else
+  echo "Looking up release-triggered runs for $COMMIT_SHORT (>= $RELEASE_START_TS)..."
+  RELEASE_RUN_IDS=""
+  # ~90s discovery window: release runs usually appear within 5-15s.
+  for attempt in $(seq 1 30); do
+    RELEASE_RUN_IDS="$(gh run list \
+        --commit "$COMMIT_FULL" \
+        --event release \
+        --limit 20 \
+        --json databaseId,createdAt \
+        --jq ".[] | select(.createdAt >= \"$RELEASE_START_TS\") | .databaseId" \
+        2>/dev/null || true)"
+    if [ -n "$RELEASE_RUN_IDS" ]; then
+      break
+    fi
+    echo "  (attempt $attempt) no release runs yet, sleeping 3s..."
+    sleep 3
+  done
+
+  if [ -z "$RELEASE_RUN_IDS" ]; then
+    # No release-triggered workflows configured for this repo: not an error.
+    echo "No release-triggered runs detected within 90s; assuming none configured."
+  else
+    CI_FAILED=0
+    for RID in $RELEASE_RUN_IDS; do
+      echo "Watching release run $RID..."
+      # Cap each watch at 30 min so a stuck job cannot hang /push forever.
+      if ! timeout 1800 gh run watch "$RID" --exit-status --interval 5; then
+        echo "Error: release-triggered workflow run $RID failed or timed out." >&2
+        gh run view "$RID" --log-failed || true
+        CI_FAILED=1
+      fi
+    done
+    if [ "$CI_FAILED" = "1" ]; then
+      echo "Error: at least one release-triggered workflow failed." >&2
+      exit 1
+    fi
+    echo "All release-triggered runs succeeded."
+  fi
 fi
 
 echo "Exit code: 0"`;
@@ -436,7 +492,7 @@ function streamPushToolCall(model: Model<Api>, toolCallId: string): AssistantMes
 function failureAdvicePrompt(output: string): string {
 	return `The /push extension failed during the add → commit → push → CI → release workflow.
 
-Please read the recorded bash output below, identify which step failed (the script logs "=== N/8 ... ===" banners), explain the likely cause, and give concise, actionable next steps for the user. Do not rerun any commands unless the user asks.
+Please read the recorded bash output below, identify which step failed (the script logs "=== N/9 ... ===" banners), explain the likely cause, and give concise, actionable next steps for the user. Do not rerun any commands unless the user asks.
 
 Bash output:
 \`\`\`
@@ -485,7 +541,7 @@ export default function pushExtension(pi: ExtensionAPI) {
 			const suffix = output ? " The bash output is in the tool result above." : "";
 			return streamText(
 				model,
-				`/push completed: staged → committed → pushed → CI green → release created.${suffix} Push used \`git push origin HEAD:<branch>\` (no force push).`,
+				`/push completed: staged → committed → pushed → CI green → release created → release CI green.${suffix} Push used \`git push origin HEAD:<branch>\` (no force push).`,
 			);
 		},
 	});

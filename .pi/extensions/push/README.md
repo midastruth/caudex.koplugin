@@ -31,14 +31,21 @@ which step broke.
    any run fails, the script prints failing logs and aborts before creating
    any release. Skipped (with a warning) if `gh` is missing/unauthenticated
    or the repo has no `.github/workflows/`.
-7. **Build release asset** — resolves the version from `_meta.lua`, then
-   `package.json`, then a timestamp fallback. For KOReader‑style Lua plugins
-   (`_meta.lua` + `main.lua`) it builds `<plugin>-<version>-<sha>.zip` from
-   the tracked top‑level Lua files plus `askgpt/` and includes the SHA256 in
-   the release notes. Refuses to overwrite an existing release tag.
-8. **Create the GitHub release** — records `RELEASE_START_TS` just before the
-   call, then `gh release create <tag> [asset] --target <current-branch>
-   --title <tag> --notes-file …` and prints the release URL.
+7. **Auto-bump version & determine release** — fetches tags from `origin`,
+   then if `HEAD` is already pointed to by a semver tag that already has a
+   GitHub release, `/push` treats this as “no new commits since the last
+   release” and skips release creation instead of failing. Otherwise it derives
+   the next unused patch version from the latest semver git tag/release
+   (`v1.7.11` → `v1.7.12`, continuing to bump if a candidate already exists),
+   writes it into `_meta.lua` and `package.json` when present, commits
+   `chore: bump version to <tag>`, pushes that bump commit, and waits for CI on
+   the bump commit before publishing.
+8. **Build & publish release** — for KOReader‑style Lua plugins (`_meta.lua` +
+   `main.lua`) it builds `<plugin>-<version>-<sha>.zip` from the tracked
+   top‑level Lua files plus `askgpt/`, includes the SHA256 in the release
+   notes, records `RELEASE_START_TS`, then runs `gh release create <tag>
+   [asset] --target <current-branch> --title <tag> --notes-file …` and prints
+   the release URL.
 9. **Wait for release-triggered workflows** — polls `gh run list --commit
    <sha> --event release` for up to ~90s, filtering to runs created at or
    after `RELEASE_START_TS` so re-releases of the same commit don’t match
@@ -65,9 +72,13 @@ If the bash tool exits non‑zero the extension:
 - never runs `--force` / `--force-with-lease`;
 - never rewrites history;
 - skips the commit step if the worktree is clean (no empty commits);
+- fetches tags and automatically bumps the patch version to the next unused
+  semver tag/release before publishing a new release;
+- skips release creation gracefully if `HEAD` is already released and there are
+  no new commits since that release;
 - aborts the release if any GitHub Actions run for the pushed commit fails;
 - aborts /push if any release-triggered workflow for the new release fails;
-- refuses to overwrite an existing release tag;
+- never overwrites an existing release tag;
 - the bash call uses a 1800s timeout so CI has time to finish, and each
   release-run watch is itself capped at 1800s to prevent stuck jobs from
   hanging /push indefinitely.

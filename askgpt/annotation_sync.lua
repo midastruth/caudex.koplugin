@@ -4,7 +4,8 @@
 -- Phase 2: improved candidate scoring (prefix/suffix/chapter/progression),
 --          structured conflict reporting, short-text conservatism.
 -- Phase 3: bidirectional sync — push local note/color changes back to
---          book-aware; apply tombstones (reader-web deletes).
+--          book-aware; apply tombstones both ways (reader-web deletes pulled,
+--          KOReader deletes pushed via delete_highlight_only).
 --
 -- Scoring breakdown (max 120 pts):
 --   (a) prefix similarity:       0–40 pts
@@ -23,6 +24,8 @@ local Util     = require("askgpt.util")
 local logger   = require("logger")
 
 local AnnotationSync = {}
+
+local PENDING_DELETES_SETTING = "bookaware_pending_deletes"
 
 -- ── color mapping ─────────────────────────────────────────────────────────
 
@@ -305,6 +308,69 @@ local function fetch_deleted_ids(sha256)
   return deleted_ids
 end
 
+local function read_pending_deletes(ui)
+  if not ui or not ui.doc_settings
+      or type(ui.doc_settings.readSetting) ~= "function" then
+    return {}
+  end
+  local pending = ui.doc_settings:readSetting(PENDING_DELETES_SETTING)
+  local ids = {}
+  if type(pending) ~= "table" then return ids end
+
+  -- Current format is an array of backend highlight ids. Also accept a map
+  -- shape for forwards/backwards compatibility with development builds.
+  for k, v in pairs(pending) do
+    if type(v) == "string" and v ~= "" then
+      ids[v] = true
+    elseif type(k) == "string" and k ~= "" and v then
+      ids[k] = true
+    end
+  end
+  return ids
+end
+
+local function save_pending_deletes(ui, ids)
+  if not ui or not ui.doc_settings
+      or type(ui.doc_settings.saveSetting) ~= "function" then
+    return
+  end
+  local list = {}
+  for id in pairs(ids or {}) do
+    table.insert(list, id)
+  end
+  table.sort(list)
+  ui.doc_settings:saveSetting(PENDING_DELETES_SETTING, list)
+end
+
+local function queue_pending_delete(ui, highlight_id)
+  if type(highlight_id) ~= "string" or highlight_id == "" then return 0 end
+  local ids = read_pending_deletes(ui)
+  if ids[highlight_id] then return 0 end
+  ids[highlight_id] = true
+  save_pending_deletes(ui, ids)
+  return 1
+end
+
+local function drain_pending_deletes(ui, sha256)
+  if type(sha256) ~= "string" or sha256 == "" then
+    return { deleted = 0, failed = 0 }
+  end
+  local ids = read_pending_deletes(ui)
+  local deleted, failed, changed = 0, 0, false
+  for id in pairs(ids) do
+    local ok = pcall(AiClient.deleteHighlight, sha256, id, "koreader")
+    if ok then
+      ids[id] = nil
+      deleted = deleted + 1
+      changed = true
+    else
+      failed = failed + 1
+    end
+  end
+  if changed then save_pending_deletes(ui, ids) end
+  return { deleted = deleted, failed = failed }
+end
+
 -- ── Phase 3a: push new KOReader-originated highlights ─────────────────────
 
 -- Upload local annotations that have no bookaware_highlight_id yet. Only
@@ -487,8 +553,11 @@ local function apply_tombstones(ui, sha256, deleted_ids)
   if not deleted_ids or not next(deleted_ids) then return 0 end
 
   -- Remove matching local annotations. Mirror KOReader's own removal event
-  -- shape: include the removed item and a negative index_modified so
-  -- ReaderAnnotation:onAnnotationsModified() does not treat this as an edit.
+  -- shape (see KOReader ReaderBookmark:removeItemByIndex): include the
+  -- removed item and a negative index_modified so ReaderAnnotation does not
+  -- treat this as an edit. Add a book-aware origin marker so our plugin's
+  -- onAnnotationsModified hook can distinguish a web-side tombstone being
+  -- applied locally from a real user-initiated local deletion.
   local Event       = require("ui/event")
   local annotations = ui.annotation.annotations
   local removed     = 0
@@ -504,15 +573,13 @@ local function apply_tombstones(ui, sha256, deleted_ids)
         removed_item,
         nb_highlights_added = -1,
         index_modified = -i,
+        bookaware_origin = "tombstone_apply",
       }))
     else
       i = i + 1
     end
   end
 
-  if removed > 0 and ui.doc_settings and type(ui.doc_settings.saveSetting) == "function" then
-    ui.doc_settings:saveSetting("annotations", annotations)
-  end
   return removed
 end
 
@@ -522,7 +589,7 @@ end
 -- Phase 1/2: pull pending highlights, locate in document, write native annotations.
 -- Phase 3a: push local note/color changes back to book-aware.
 -- Phase 3b: apply tombstones — remove annotations deleted via reader-web.
--- Returns { resolved, conflict, failed, pushed, removed } counts.
+-- Returns { resolved, conflict, failed, pushed, created, removed } counts.
 -- Raises on fatal errors (no document, can't determine SHA256, network failure).
 function AnnotationSync.sync(ui)
   if not ui or not ui.document then
@@ -541,6 +608,10 @@ function AnnotationSync.sync(ui)
   end
 
   local resolved, conflict, failed = 0, 0, 0
+
+  -- Retry KOReader-originated deletes that were queued when the user deleted
+  -- a synced annotation while offline or while the backend was unavailable.
+  local delete_result = drain_pending_deletes(ui, sha256)
 
   -- ── Phase 1/2: pull pending highlights ────────────────────────────────
   local pending_result = AiClient.listHighlights(sha256, "pending")
@@ -665,8 +736,11 @@ function AnnotationSync.sync(ui)
   -- ── Phase 3c: apply tombstones from book-aware ─────────────────────────
   local removed = apply_tombstones(ui, sha256, deleted_ids)
 
-  -- Save id/synced_color/note fields updated by push_new / push_changes.
-  if (new_result.created > 0 or push_result.pushed > 0)
+  -- Save id/synced_color/note fields updated by push_new / push_changes, and
+  -- deletions applied by tombstones. (Resolved annotations are saved earlier,
+  -- before fetching tombstones, so a later network failure cannot leave the
+  -- backend marked resolved while the local sidecar misses the annotation.)
+  if (new_result.created > 0 or push_result.pushed > 0 or removed > 0)
       and ui.doc_settings
       and type(ui.doc_settings.saveSetting) == "function" then
     ui.doc_settings:saveSetting("annotations", ui.annotation.annotations)
@@ -675,6 +749,7 @@ function AnnotationSync.sync(ui)
   local total_failed = failed
     + (push_result.failed or 0)
     + (new_result.failed or 0)
+    + (delete_result.failed or 0)
   return {
     resolved = resolved,
     conflict = conflict,
@@ -682,6 +757,7 @@ function AnnotationSync.sync(ui)
     pushed   = push_result.pushed,
     created  = new_result.created,
     removed  = removed,
+    deleted  = delete_result.deleted or 0,
     -- Per-annotation failure details from push_new (client_id, exact, message).
     -- Surfaced so callers can show "upload failed for N highlight(s): ...".
     create_errors = new_result.errors or {},
@@ -722,6 +798,44 @@ function AnnotationSync.push_changes_only(ui)
   local sha256 = get_sha256(ui)
   if not sha256 then return { pushed = 0, failed = 0 } end
   return push_changes(ui, sha256, nil)
+end
+
+-- Persist a KOReader-originated delete before attempting network IO. This is
+-- intentionally separate from delete_highlight_only so main.lua can record the
+-- user's delete immediately, even if config validation or connectivity fails
+-- before the scheduled backend request runs.
+function AnnotationSync.queue_deleted_highlight(ui, item)
+  if type(item) ~= "table" then return { queued = 0 } end
+  local bid = type(item.bookaware_highlight_id) == "string" and item.bookaware_highlight_id or nil
+  if not bid or bid == "" then return { queued = 0 } end
+
+  local sha256 = get_sha256(ui)
+  local ann_sha = type(item.bookaware_sha256) == "string" and item.bookaware_sha256 or nil
+  if sha256 and ann_sha and ann_sha ~= "" and ann_sha ~= sha256 then
+    return { queued = 0 }
+  end
+
+  return { queued = queue_pending_delete(ui, bid) }
+end
+
+-- Push-only sync: drain queued tombstones for KOReader-deleted synced
+-- highlights. Silently no-ops when the current book SHA cannot be determined;
+-- backend failures remain queued and are surfaced in the returned failed count.
+function AnnotationSync.push_pending_deletes_only(ui)
+  if not ui or not ui.document then return { deleted = 0, failed = 0 } end
+  local sha256 = get_sha256(ui)
+  if not sha256 then return { deleted = 0, failed = 0 } end
+  return drain_pending_deletes(ui, sha256)
+end
+
+-- Queue and immediately try to tombstone a KOReader-deleted synced highlight
+-- on the backend. Used by tests and safe for callers that don't need to split
+-- durable intent recording from the network attempt.
+function AnnotationSync.delete_highlight_only(ui, item)
+  local queued = AnnotationSync.queue_deleted_highlight(ui, item)
+  local result = AnnotationSync.push_pending_deletes_only(ui)
+  result.queued = queued.queued or 0
+  return result
 end
 
 -- Fetch conflict highlights for the currently open book.

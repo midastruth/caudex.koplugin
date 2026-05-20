@@ -315,7 +315,7 @@ local function http_request_with_retry(request_params, timeout)
       local close_pcall_ok, close_ok, close_err = pcall(close_source)
       if not close_pcall_ok or close_ok == nil or close_ok == false then
         local close_message = "Request source close failed: " .. tostring(close_pcall_ok and close_err or close_ok)
-        if success and tonumber(code) == 200 then
+        if success and is_success_status(code) then
           success, res, code, status_line = false, close_message, nil, nil
         elseif success and tonumber(code) then
           status_line = tostring(status_line or "") .. " (" .. close_message .. ")"

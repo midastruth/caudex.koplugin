@@ -25,8 +25,10 @@ local function make_reader_ui()
 end
 
 -- Shared stubs required by every main.lua load.
-local function setup_stubs(sync_calls, push_calls, cfg_override, push_new_calls)
+local function setup_stubs(sync_calls, push_calls, cfg_override, push_new_calls, delete_calls, queue_calls)
   push_new_calls = push_new_calls or {}
+  delete_calls = delete_calls or {}
+  queue_calls = queue_calls or {}
   package.loaded["askgpt.dialog_controller"] = { show = function() end }
   package.loaded["askgpt.background_jobs"]   = {
     submit_summary    = function() end,
@@ -50,6 +52,18 @@ local function setup_stubs(sync_calls, push_calls, cfg_override, push_new_calls)
     push_new_highlights_only = function(_ui)
       table.insert(push_new_calls, true)
       return { created = 1, failed = 0, errors = {} }
+    end,
+    queue_deleted_highlight = function(_ui, item)
+      table.insert(queue_calls, item and item.bookaware_highlight_id or true)
+      return { queued = 1 }
+    end,
+    push_pending_deletes_only = function(_ui)
+      table.insert(delete_calls, true)
+      return { deleted = 1, failed = 0 }
+    end,
+    delete_highlight_only = function(_ui, item)
+      table.insert(delete_calls, item and item.bookaware_highlight_id or true)
+      return { deleted = 1, failed = 0 }
     end,
     list_conflicts = function() return {} end,
   }
@@ -250,4 +264,79 @@ do
   })
   for _, s in ipairs(spy.scheduled) do s.fn() end
   H.eq("T-AS9 auto_sync enables new highlight upload", #push_new_calls, 1)
+end
+
+-- ── T-AS10: local deletion of synced highlight tombstones backend ─────────
+
+do
+  local spy = H.mock_koreader()
+  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
+          "askgpt.dialog_controller", "askgpt.background_jobs",
+          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+
+  local sync_calls, push_calls, push_new_calls, delete_calls, queue_calls = {}, {}, {}, {}, {}
+  setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls, delete_calls, queue_calls)
+
+  local AskGPT    = require("main")
+  local fake_self = { ui = make_reader_ui() }
+
+  AskGPT.onAnnotationsModified(fake_self, {
+    { text = "synced highlight", bookaware_highlight_id = "hl-delete-me", bookaware_sha256 = SHA },
+    nb_highlights_added = -1,
+    index_modified = -1,
+  })
+  H.eq("T-AS10 deletion queues tombstone", #queue_calls, 1)
+  H.eq("T-AS10 queued id forwarded", queue_calls[1], "hl-delete-me")
+  H.eq("T-AS10 deletion schedules tombstone push", #spy.scheduled, 1)
+  for _, s in ipairs(spy.scheduled) do s.fn() end
+  H.eq("T-AS10 push_pending_deletes_only called", #delete_calls, 1)
+end
+
+-- ── T-AS11: web tombstone application is not echoed back as local delete ──
+
+do
+  local spy = H.mock_koreader()
+  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
+          "askgpt.dialog_controller", "askgpt.background_jobs",
+          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+
+  local sync_calls, push_calls, push_new_calls, delete_calls = {}, {}, {}, {}
+  setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls, delete_calls)
+
+  local AskGPT    = require("main")
+  local fake_self = { ui = make_reader_ui() }
+
+  AskGPT.onAnnotationsModified(fake_self, {
+    { text = "web deleted highlight", bookaware_highlight_id = "hl-web-deleted" },
+    nb_highlights_added = -1,
+    index_modified = -1,
+    bookaware_origin = "tombstone_apply",
+  })
+  H.eq("T-AS11 web tombstone schedules no backend delete", #spy.scheduled, 0)
+  H.eq("T-AS11 push_pending_deletes_only not called", #delete_calls, 0)
+end
+
+-- ── T-AS12: config failure does not lose local delete intent ──────────────
+
+do
+  local spy = H.mock_koreader()
+  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
+          "askgpt.dialog_controller", "askgpt.background_jobs",
+          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+
+  local sync_calls, push_calls, push_new_calls, delete_calls, queue_calls = {}, {}, {}, {}, {}
+  setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls, delete_calls, queue_calls)
+  package.loaded["askgpt.config"].validate = function() return false, "bad config" end
+
+  local AskGPT    = require("main")
+  local fake_self = { ui = make_reader_ui() }
+
+  AskGPT.onAnnotationsModified(fake_self, {
+    { text = "synced highlight", bookaware_highlight_id = "hl-queue-only", bookaware_sha256 = SHA },
+    nb_highlights_added = -1,
+    index_modified = -1,
+  })
+  H.eq("T-AS12 deletion queues despite config failure", #queue_calls, 1)
+  for _, s in ipairs(spy.scheduled) do s.fn() end
+  H.eq("T-AS12 config failure prevents immediate push", #delete_calls, 0)
 end

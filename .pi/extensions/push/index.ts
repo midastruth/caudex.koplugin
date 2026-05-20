@@ -11,15 +11,25 @@ import {
 
 const PROVIDER = "pi-push-extension";
 const MODEL_ID = "push-command-runner";
-const USER_MESSAGE = "Please push this worktree to GitHub main.";
+const USER_MESSAGE = "Please run the full /push workflow (add → commit → push → wait CI → release).";
 
-// /push pushes the current HEAD to origin/main, refuses dirty worktrees,
-// never force-pushes, and then creates a GitHub release from the pushed HEAD.
-// The command below is executed through Pi's normal built-in bash tool pipeline,
-// so the bash tool result is recorded normally. If it fails, this extension
-// restores the user's model and asks it to explain the failure and suggest fixes.
-const PUSH_COMMAND = `set -euo pipefail
+// /push runs an end-to-end publish workflow:
+//   1. Check current branch (refuse detached HEAD).
+//   2. git add -A.
+//   3. Generate a conventional commit message from the staged diff.
+//   4. git commit (skip if nothing staged).
+//   5. git push origin HEAD:<branch>.
+//   6. Wait for GitHub Actions runs triggered by the push (gh run watch); abort on failure.
+//   7. Build the release asset (KOReader-style zip when applicable).
+//   8. Create a GitHub release for the new HEAD.
+//
+// Executed through Pi's normal built-in bash tool pipeline. On any failure the
+// extension restores the user's selected model and asks it to explain the failure.
+const PUSH_COMMAND = String.raw`set -euo pipefail
 
+step() { printf '\n=== %s ===\n' "$*"; }
+
+step "1/8 Check git worktree and current branch"
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "Error: not inside a Git worktree." >&2
   exit 1
@@ -33,7 +43,6 @@ if [ -z "$REMOTE_URL" ]; then
   echo "Error: no origin remote configured." >&2
   exit 1
 fi
-
 case "$REMOTE_URL" in
   *github.com*) ;;
   *)
@@ -43,30 +52,180 @@ case "$REMOTE_URL" in
 esac
 
 BRANCH="$(git branch --show-current || true)"
-echo "Worktree: $ROOT"
-echo "Current branch: \${BRANCH:-detached HEAD}"
-echo "Origin: $REMOTE_URL"
-echo
-
-echo "Git status:"
-git status --short
-echo
-
-if [ -n "$(git status --porcelain)" ]; then
-  echo "Error: worktree has uncommitted changes. Commit or stash them before /push." >&2
+if [ -z "$BRANCH" ]; then
+  echo "Error: detached HEAD. Checkout a branch before /push." >&2
   exit 1
 fi
+echo "Worktree: $ROOT"
+echo "Origin:   $REMOTE_URL"
+echo "Branch:   $BRANCH"
 
-echo "Fetching origin main..."
-git fetch origin main
+step "2/8 git add -A"
+git add -A
+echo "Status after add:"
+git status --short || true
 
-echo "Pushing current HEAD to origin/main..."
-git push origin HEAD:main
+step "3/8 Generate commit message"
+# Detect whether we actually have staged changes.
+if git diff --cached --quiet; then
+  HAS_STAGED=0
+else
+  HAS_STAGED=1
+fi
 
-echo "Push complete."
-echo
+COMMIT_MSG=""
+if [ "$HAS_STAGED" = "1" ]; then
+  COMMIT_MSG="$(python3 - <<'PY'
+import os
+import subprocess
 
-echo "Preparing GitHub release..."
+name_status = subprocess.check_output(
+    ["git", "diff", "--cached", "--name-status"], text=True
+).strip().splitlines()
+
+added, modified, deleted, renamed = [], [], [], []
+for line in name_status:
+    parts = line.split("\t")
+    if not parts:
+        continue
+    code = parts[0]
+    if code.startswith("R") and len(parts) >= 3:
+        renamed.append((parts[1], parts[2]))
+    elif code.startswith("A") and len(parts) >= 2:
+        added.append(parts[1])
+    elif code.startswith("D") and len(parts) >= 2:
+        deleted.append(parts[1])
+    elif code.startswith("M") and len(parts) >= 2:
+        modified.append(parts[1])
+    elif len(parts) >= 2:
+        modified.append(parts[1])
+
+all_paths = (
+    added
+    + modified
+    + deleted
+    + [new for _, new in renamed]
+)
+
+def classify(paths):
+    if not paths:
+        return "chore"
+    exts = {os.path.splitext(p)[1].lower() for p in paths}
+    if exts <= {".md", ".rst", ".txt"}:
+        return "docs"
+    if all("test" in p.lower() or "spec" in p.lower() for p in paths):
+        return "test"
+    if exts <= {".yml", ".yaml", ".toml", ".json", ".ini", ".cfg"} or all(
+        p.startswith(".github/") for p in paths
+    ):
+        return "chore"
+    if exts <= {".lua", ".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"}:
+        if added and not modified and not deleted:
+            return "feat"
+        if deleted and not modified and not added:
+            return "chore"
+        return "fix" if not added else "feat"
+    return "chore"
+
+prefix = classify(all_paths)
+
+display = []
+for p in all_paths[:3]:
+    display.append(os.path.basename(p) or p)
+extra = len(all_paths) - len(display)
+summary = ", ".join(display)
+if extra > 0:
+    summary += f" (+{extra} more)"
+if not summary:
+    summary = "update repository"
+
+subject = f"{prefix}: {summary}"
+if len(subject) > 72:
+    subject = subject[:69] + "..."
+
+lines = [subject, ""]
+if added:
+    lines.append("Added:")
+    lines += [f"  - {p}" for p in added]
+if modified:
+    lines.append("Modified:")
+    lines += [f"  - {p}" for p in modified]
+if deleted:
+    lines.append("Deleted:")
+    lines += [f"  - {p}" for p in deleted]
+if renamed:
+    lines.append("Renamed:")
+    lines += [f"  - {old} -> {new}" for old, new in renamed]
+
+print("\n".join(lines).rstrip())
+PY
+)"
+  echo "Commit message:"
+  printf '%s\n' "$COMMIT_MSG" | sed 's/^/  | /'
+else
+  echo "No staged changes; will skip git commit."
+fi
+
+step "4/8 git commit"
+if [ "$HAS_STAGED" = "1" ]; then
+  printf '%s\n' "$COMMIT_MSG" | git commit -F -
+else
+  echo "Skipped (working tree clean)."
+fi
+
+step "5/8 git push origin HEAD:$BRANCH"
+git push origin "HEAD:$BRANCH"
+COMMIT_FULL="$(git rev-parse HEAD)"
+COMMIT_SHORT="$(git rev-parse --short HEAD)"
+echo "Pushed commit: $COMMIT_FULL"
+
+step "6/8 Wait for GitHub Actions"
+if ! command -v gh >/dev/null 2>&1; then
+  echo "Warning: GitHub CLI (gh) not installed; skipping Actions wait." >&2
+  SKIP_CI=1
+elif ! gh auth status >/dev/null 2>&1; then
+  echo "Warning: gh is not authenticated; skipping Actions wait." >&2
+  SKIP_CI=1
+elif [ ! -d .github/workflows ] || [ -z "$(ls -A .github/workflows 2>/dev/null)" ]; then
+  echo "No .github/workflows present; skipping Actions wait."
+  SKIP_CI=1
+else
+  SKIP_CI=0
+fi
+
+if [ "$SKIP_CI" != "1" ]; then
+  echo "Looking up workflow runs for $COMMIT_SHORT..."
+  RUN_IDS=""
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    RUN_IDS="$(gh run list --branch "$BRANCH" --commit "$COMMIT_FULL" --limit 20 --json databaseId --jq '.[].databaseId' 2>/dev/null || true)"
+    if [ -n "$RUN_IDS" ]; then
+      break
+    fi
+    echo "  (attempt $attempt) no runs yet, sleeping 3s..."
+    sleep 3
+  done
+
+  if [ -z "$RUN_IDS" ]; then
+    echo "Warning: no Actions runs detected for this commit after waiting; continuing." >&2
+  else
+    CI_FAILED=0
+    for RID in $RUN_IDS; do
+      echo "Watching run $RID..."
+      if ! gh run watch "$RID" --exit-status --interval 5; then
+        echo "Error: GitHub Actions run $RID failed." >&2
+        gh run view "$RID" --log-failed || true
+        CI_FAILED=1
+      fi
+    done
+    if [ "$CI_FAILED" = "1" ]; then
+      echo "Error: at least one GitHub Actions run failed; aborting release." >&2
+      exit 1
+    fi
+    echo "All Actions runs succeeded."
+  fi
+fi
+
+step "7/8 Build release asset"
 if ! command -v gh >/dev/null 2>&1; then
   echo "Error: GitHub CLI (gh) is required to create the release." >&2
   exit 1
@@ -76,14 +235,10 @@ if ! gh auth status >/dev/null 2>&1; then
   exit 1
 fi
 
-COMMIT_FULL="$(git rev-parse HEAD)"
-COMMIT_SHORT="$(git rev-parse --short HEAD)"
 VERSION=""
-
 if [ -f _meta.lua ]; then
-  VERSION="$(sed -nE 's/.*version[[:space:]]*=[[:space:]]*"([^"]+)".*/\\1/p' _meta.lua | head -n 1)"
+  VERSION="$(sed -nE 's/.*version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' _meta.lua | head -n 1)"
 fi
-
 if [ -z "$VERSION" ] && [ -f package.json ]; then
   VERSION="$(python3 - <<'PY' 2>/dev/null || true
 import json
@@ -92,22 +247,14 @@ with open('package.json', 'r', encoding='utf-8') as f:
 PY
 )"
 fi
-
 if [ -z "$VERSION" ]; then
   VERSION="$(date -u +%Y%m%d%H%M%S)-$COMMIT_SHORT"
 fi
 
 case "$VERSION" in
-  v*)
-    TAG="$VERSION"
-    RELEASE_VERSION="\${VERSION#v}"
-    ;;
-  *)
-    TAG="v$VERSION"
-    RELEASE_VERSION="$VERSION"
-    ;;
+  v*) TAG="$VERSION"; RELEASE_VERSION="$(echo "$VERSION" | sed 's/^v//')" ;;
+  *)  TAG="v$VERSION"; RELEASE_VERSION="$VERSION" ;;
 esac
-
 echo "Release tag: $TAG"
 
 if gh release view "$TAG" >/dev/null 2>&1; then
@@ -116,9 +263,7 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 fi
 
 TMP_DIR="$(mktemp -d)"
-cleanup_release_tmp() {
-  rm -rf "$TMP_DIR"
-}
+cleanup_release_tmp() { rm -rf "$TMP_DIR"; }
 trap cleanup_release_tmp EXIT
 
 NOTES_PATH="$TMP_DIR/release-notes.md"
@@ -130,7 +275,6 @@ if [ -f _meta.lua ] && [ -f main.lua ]; then
     echo "Error: python3 is required to build the KOReader plugin release zip." >&2
     exit 1
   fi
-
   PLUGIN_NAME="$(basename "$ROOT")"
   ASSET_NAME="$PLUGIN_NAME-$RELEASE_VERSION-$COMMIT_SHORT.zip"
   ASSET_PATH="$TMP_DIR/$ASSET_NAME"
@@ -169,16 +313,20 @@ Automated release for commit $COMMIT_FULL.
 $ASSET_SHA  $ASSET_NAME
 \`\`\`
 EOF
-
-  echo "Creating GitHub release $TAG with asset $ASSET_NAME..."
-  gh release create "$TAG" "$ASSET_PATH" --target main --title "$TAG" --notes-file "$NOTES_PATH"
 else
+  ASSET_NAME=""
   cat > "$NOTES_PATH" <<EOF
 Automated release for commit $COMMIT_FULL.
 EOF
+fi
 
-  echo "Creating GitHub release $TAG..."
-  gh release create "$TAG" --target main --title "$TAG" --notes-file "$NOTES_PATH"
+step "8/8 Create GitHub release"
+if [ -n "$ASSET_PATH" ]; then
+  echo "Creating release $TAG with asset $ASSET_NAME..."
+  gh release create "$TAG" "$ASSET_PATH" --target "$BRANCH" --title "$TAG" --notes-file "$NOTES_PATH"
+else
+  echo "Creating release $TAG (no asset)..."
+  gh release create "$TAG" --target "$BRANCH" --title "$TAG" --notes-file "$NOTES_PATH"
 fi
 
 RELEASE_URL="$(gh release view "$TAG" --json url --jq .url 2>/dev/null || true)"
@@ -273,7 +421,8 @@ function streamPushToolCall(model: Model<Api>, toolCallId: string): AssistantMes
 	queueMicrotask(() => {
 		stream.push({ type: "start", partial: output });
 		stream.push({ type: "toolcall_start", contentIndex: 0, partial: output });
-		const args = { command: PUSH_COMMAND, timeout: 300 };
+		// CI wait can take a while; give the bash tool plenty of time.
+		const args = { command: PUSH_COMMAND, timeout: 1800 };
 		toolCall.arguments = args;
 		stream.push({ type: "toolcall_delta", contentIndex: 0, delta: JSON.stringify(args), partial: output });
 		stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: output });
@@ -285,9 +434,9 @@ function streamPushToolCall(model: Model<Api>, toolCallId: string): AssistantMes
 }
 
 function failureAdvicePrompt(output: string): string {
-	return `The /push extension failed while trying to push the current worktree to GitHub main and create a GitHub release.
+	return `The /push extension failed during the add → commit → push → CI → release workflow.
 
-Please read the recorded bash output below, then explain the likely cause and give concise, actionable next steps for the user. Do not rerun commands unless the user asks.
+Please read the recorded bash output below, identify which step failed (the script logs "=== N/8 ... ===" banners), explain the likely cause, and give concise, actionable next steps for the user. Do not rerun any commands unless the user asks.
 
 Bash output:
 \`\`\`
@@ -329,20 +478,20 @@ export default function pushExtension(pi: ExtensionAPI) {
 				const suffix = output ? " The bash output is in the tool result above." : "";
 				return streamText(
 					model,
-					`/push failed.${suffix} I will restore your selected model and ask it for troubleshooting suggestions. No force push was attempted.`,
+					`/push failed.${suffix} I will restore your selected model and ask it to diagnose the failure. No force push was attempted.`,
 				);
 			}
 
 			const suffix = output ? " The bash output is in the tool result above." : "";
 			return streamText(
 				model,
-				`/push completed and the GitHub release was created.${suffix} Current HEAD was pushed with \`git push origin HEAD:main\`. No force push was attempted.`,
+				`/push completed: staged → committed → pushed → CI green → release created.${suffix} Push used \`git push origin HEAD:<branch>\` (no force push).`,
 			);
 		},
 	});
 
 	pi.registerCommand("push", {
-		description: "Safely push current HEAD to GitHub origin/main and create a GitHub release",
+		description: "Add, commit, push current branch, wait for CI, then build & publish a GitHub release",
 		handler: async (_args, ctx) => {
 			if (!ctx.isIdle()) {
 				ctx.ui.notify("/push can only start when Pi is idle.", "warning");

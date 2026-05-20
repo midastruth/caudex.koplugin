@@ -64,6 +64,21 @@ local function isNewLocalHighlightEvent(items)
   return type(item.text) == "string" and item.text ~= ""
 end
 
+local function isLocalDeletedBookAwareHighlightEvent(items)
+  if type(items) ~= "table" or tonumber(items.nb_highlights_added or 0) >= 0 then
+    return false
+  end
+  -- Deletions caused by applying web-side tombstones are already represented
+  -- on the backend; do not echo them back as KOReader-originated deletes.
+  if items.bookaware_origin == "tombstone_apply" then
+    return false
+  end
+  local item = items[1]
+  return type(item) == "table"
+      and type(item.bookaware_highlight_id) == "string"
+      and item.bookaware_highlight_id ~= ""
+end
+
 local function placeAskGPTBeforeToc()
   local ok, order = pcall(require, "ui/elements/reader_menu_order")
   if not ok or type(order) ~= "table" or type(order.navi) ~= "table" then
@@ -212,6 +227,31 @@ end
 
 function AskGPT:onAnnotationsModified(items)
   if isFileManagerUI(self.ui) then return end
+
+  if isLocalDeletedBookAwareHighlightEvent(items) and autoSyncWebHighlightsEnabled() then
+    local deleted_item = items[1]
+    local ok_q, q_result = pcall(AnnotationSync.queue_deleted_highlight, self.ui, deleted_item)
+    if not ok_q then
+      print("[book-aware] queue deleted highlight failed: " .. tostring(q_result))
+      return
+    end
+    UIManager:scheduleIn(1, function()
+      if not autoSyncWebHighlightsEnabled() then return end
+      local cfg_ok = Config.validate()
+      if not cfg_ok then return end
+      if not NetworkMgr:isOnline() then return end
+      NetworkMgr:runWhenOnline(function()
+        local ok, result = pcall(AnnotationSync.push_pending_deletes_only, self.ui)
+        if not ok then
+          print("[book-aware] auto delete highlight failed: " .. tostring(result))
+        elseif type(result) == "table" and (result.failed or 0) > 0 then
+          print("[book-aware] auto delete highlight partial failure: " .. tostring(result.failed))
+        end
+      end)
+    end)
+    return
+  end
+
   if not autoUploadNewHighlightsEnabled() then return end
   if not isNewLocalHighlightEvent(items) then return end
   if self._auto_upload_new_highlights_scheduled then return end

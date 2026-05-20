@@ -83,7 +83,11 @@ local function make_ui(find_fn, opts)
       end,
     }
   end
+  local events = {}
+  local settings = opts.settings or {}
   return {
+    _events = events,
+    _settings = settings,
     document = {
       file                = "/fake/book.epub",
       findAllText         = find_fn or function() return {} end,
@@ -105,11 +109,14 @@ local function make_ui(find_fn, opts)
     view         = { highlight = { saved_color = opts.saved_color or "gray" } },
     doc_settings = {
       readSetting = function(self, key)
-        return key == "file_sha256" and SHA or nil
+        if key == "file_sha256" then return SHA end
+        return settings[key]
       end,
-      saveSetting = function() end,
+      saveSetting = function(self, key, value)
+        settings[key] = value
+      end,
     },
-    handleEvent = function() end,
+    handleEvent = function(_, ev) table.insert(events, ev) end,
   }
 end
 
@@ -364,6 +371,7 @@ end
 local function make_ai_client_p3(pending_hls, all_with_deleted)
   local update_calls = {}
   local create_calls = {}
+  local delete_calls = {}
   local next_create_id = 0
   local ai = {
     listHighlights = function(_sha, _status, include_deleted)
@@ -387,9 +395,13 @@ local function make_ai_client_p3(pending_hls, all_with_deleted)
         koreader    = payload.koreader or { status = "pending" },
       } }
     end,
+    deleteHighlight = function(_sha, id, by)
+      table.insert(delete_calls, { id = id, by = by })
+      return {}
+    end,
   }
   package.loaded["askgpt.ai_client"] = ai
-  return ai, update_calls, create_calls
+  return ai, update_calls, create_calls, delete_calls
 end
 
 -- ── T6: resolved annotation stores bookaware_highlight_id and sha256 ──────
@@ -483,6 +495,9 @@ do
   H.eq("T8 removed=1",                r.removed, 1)
   H.eq("T8 resolved=0",               r.resolved, 0)
   H.eq("T8 annotation table is empty", #ui.annotation.annotations, 0)
+  H.eq("T8 tombstone event marks origin",
+    ui._events[1] and ui._events[1].data and ui._events[1].data.bookaware_origin,
+    "tombstone_apply")
 end
 
 -- ── T9: tombstone for missing local annotation → no error ─────────────────
@@ -1031,4 +1046,85 @@ do
       and detail.exact:sub(1, 30) == "diagnostic-bearing annotation ")
   H.contains("T26 error.message preserves backend error",
     detail.message, "503")
+end
+
+-- ── T27: delete_highlight_only tombstones a locally deleted synced highlight ─
+
+do
+  reset_modules()
+  local _, _, _, deletes = make_ai_client_p3({}, {})
+  local ui = make_ui(function() return {} end)
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.delete_highlight_only(ui, {
+    bookaware_highlight_id = "hl-del-027",
+    bookaware_sha256       = SHA,
+  })
+
+  H.eq("T27 deleted=1", r.deleted, 1)
+  H.eq("T27 failed=0", r.failed, 0)
+  H.eq("T27 deleteHighlight called once", #deletes, 1)
+  H.eq("T27 delete origin is koreader", deletes[1] and deletes[1].by, "koreader")
+  H.eq("T27 pending queue drained", #(ui._settings.bookaware_pending_deletes or {}), 0)
+end
+
+-- ── T28: delete_highlight_only ignores annotations from another book ──────
+
+do
+  reset_modules()
+  local _, _, _, deletes = make_ai_client_p3({}, {})
+  local ui = make_ui(function() return {} end)
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.delete_highlight_only(ui, {
+    bookaware_highlight_id = "hl-other-book",
+    bookaware_sha256       = string.rep("b", 64),
+  })
+
+  H.eq("T28 deleted=0", r.deleted, 0)
+  H.eq("T28 failed=0", r.failed, 0)
+  H.eq("T28 no delete call", #deletes, 0)
+end
+
+-- ── T29: failed backend delete remains queued for a later sync retry ──────
+
+do
+  reset_modules()
+  local delete_calls = 0
+  package.loaded["askgpt.ai_client"] = {
+    listHighlights = function() return { highlights = {} } end,
+    deleteHighlight = function()
+      delete_calls = delete_calls + 1
+      error("backend unavailable")
+    end,
+  }
+  local ui = make_ui(function() return {} end)
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.delete_highlight_only(ui, {
+    bookaware_highlight_id = "hl-pending-029",
+    bookaware_sha256       = SHA,
+  })
+
+  H.eq("T29 failed=1", r.failed, 1)
+  H.eq("T29 delete attempted once", delete_calls, 1)
+  H.eq("T29 pending delete persisted",
+    ui._settings.bookaware_pending_deletes[1], "hl-pending-029")
+end
+
+-- ── T30: full sync drains queued pending deletes ──────────────────────────
+
+do
+  reset_modules()
+  local _, _, _, deletes = make_ai_client_p3({}, {})
+  local ui = make_ui(function() return {} end, {
+    settings = { bookaware_pending_deletes = { "hl-pending-030" } },
+  })
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.sync(ui)
+
+  H.eq("T30 deleteHighlight called once", #deletes, 1)
+  H.eq("T30 deleted count reported", r.deleted, 1)
+  H.eq("T30 pending queue drained", #(ui._settings.bookaware_pending_deletes or {}), 0)
 end

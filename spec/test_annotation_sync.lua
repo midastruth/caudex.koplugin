@@ -1128,3 +1128,130 @@ do
   H.eq("T30 deleted count reported", r.deleted, 1)
   H.eq("T30 pending queue drained", #(ui._settings.bookaware_pending_deletes or {}), 0)
 end
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- Repair missing local annotations from active backend highlights
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- ── T31: repair pulls active resolved highlights and writes missing local annotation
+
+do
+  reset_modules()
+  local list_calls = {}
+  local update_calls = {}
+  package.loaded["askgpt.ai_client"] = {
+    listHighlights = function(_sha, status, include_deleted)
+      table.insert(list_calls, { status = status, include_deleted = include_deleted })
+      return { highlights = {
+        {
+          id = "hl-repair-031",
+          exact = "already resolved remotely",
+          color = "green",
+          note = "web note",
+          chapter = "Repair Chapter",
+          source = "reader-web",
+          koreader = {
+            status = "resolved",
+            pos0 = "/body/p[31].0",
+            pos1 = "/body/p[31].25",
+            page = "31",
+          },
+        },
+      } }
+    end,
+    updateHighlight = function(_sha, id, patch)
+      table.insert(update_calls, { id = id, patch = patch })
+      return {}
+    end,
+  }
+
+  local ui = make_ui(function() error("repair should use resolved backend anchors") end)
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.repair_missing_highlights(ui)
+
+  H.eq("T31 repaired=1", r.repaired, 1)
+  H.eq("T31 failed=0", r.failed, 0)
+  H.eq("T31 active list called once", #list_calls, 1)
+  H.eq("T31 list has no status filter", list_calls[1].status, nil)
+  H.eq("T31 list does not request tombstones", list_calls[1].include_deleted, nil)
+  H.eq("T31 no backend PATCH for already-resolved row", #update_calls, 0)
+  H.eq("T31 addItem called once", #ui.annotation._calls, 1)
+
+  local ann = ui.annotation.annotations[1]
+  H.eq("T31 restored backend id", ann.bookaware_highlight_id, "hl-repair-031")
+  H.eq("T31 restored sha", ann.bookaware_sha256, SHA)
+  H.eq("T31 restored pos0", ann.pos0, "/body/p[31].0")
+  H.eq("T31 restored pos1", ann.pos1, "/body/p[31].25")
+  H.eq("T31 restored color", ann.color, "green")
+  H.eq("T31 restored note", ann.note, "web note")
+  H.eq("T31 annotations saved", ui._settings.annotations, ui.annotation.annotations)
+end
+
+-- ── T32: repair is idempotent when the backend highlight already exists locally
+
+do
+  reset_modules()
+  package.loaded["askgpt.ai_client"] = {
+    listHighlights = function()
+      return { highlights = {
+        {
+          id = "hl-repair-032",
+          exact = "local copy already present",
+          koreader = {
+            status = "resolved",
+            pos0 = "/body/p[32].0",
+            pos1 = "/body/p[32].26",
+          },
+        },
+      } }
+    end,
+    updateHighlight = function() error("repair should not patch existing rows") end,
+  }
+
+  local ui = make_ui(function() return {} end)
+  table.insert(ui.annotation.annotations, {
+    bookaware_highlight_id = "hl-repair-032",
+    bookaware_sha256       = SHA,
+    text                   = "local copy already present",
+    pos0                   = "/body/p[32].0",
+    pos1                   = "/body/p[32].26",
+  })
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.repair_missing_highlights(ui)
+
+  H.eq("T32 repaired=0", r.repaired, 0)
+  H.eq("T32 skipped=1", r.skipped, 1)
+  H.eq("T32 failed=0", r.failed, 0)
+  H.eq("T32 no duplicate addItem", #ui.annotation._calls, 0)
+  H.eq("T32 annotation count stays one", #ui.annotation.annotations, 1)
+  H.eq("T32 no save when unchanged", ui._settings.annotations, nil)
+end
+
+-- ── T33: repair reports failed when an active row has no usable anchor
+
+do
+  reset_modules()
+  package.loaded["askgpt.ai_client"] = {
+    listHighlights = function()
+      return { highlights = {
+        {
+          id = "hl-repair-033",
+          exact = "cannot be found locally",
+          koreader = { status = "resolved" },
+        },
+      } }
+    end,
+    updateHighlight = function() error("repair should not mark backend rows failed") end,
+  }
+
+  local ui = make_ui(function() return {} end)
+
+  local AS = require("askgpt.annotation_sync")
+  local r = AS.repair_missing_highlights(ui)
+
+  H.eq("T33 repaired=0", r.repaired, 0)
+  H.eq("T33 failed=1", r.failed, 1)
+  H.eq("T33 no annotation written", #ui.annotation.annotations, 0)
+end

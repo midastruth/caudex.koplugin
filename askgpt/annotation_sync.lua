@@ -583,6 +583,60 @@ local function apply_tombstones(ui, sha256, deleted_ids)
   return removed
 end
 
+-- Repair mode: pull all active backend highlights and recreate any local
+-- annotation missing its book-aware identity. This is intentionally separate
+-- from normal sync, which only consumes pending web highlights.
+local function repair_missing(ui, sha256)
+  local result = AiClient.listHighlights(sha256)
+  local highlights = (type(result) == "table" and type(result.highlights) == "table")
+    and result.highlights or {}
+
+  local repaired, skipped, failed = 0, 0, 0
+  for _, hl in ipairs(highlights) do
+    local ok = pcall(function()
+      if type(hl) ~= "table" or type(hl.id) ~= "string" or hl.id == ""
+          or type(hl.exact) ~= "string" or hl.exact == ""
+          or hl.deleted_at then
+        skipped = skipped + 1
+        return
+      end
+      if find_synced_annotation(ui, sha256, hl.id) then
+        skipped = skipped + 1
+        return
+      end
+
+      local k = type(hl.koreader) == "table" and hl.koreader or {}
+      local pos0_xp = type(k.pos0) == "string" and k.pos0 or nil
+      local pos1_xp = type(k.pos1) == "string" and k.pos1 or nil
+
+      -- Resolved KOReader rows already contain native anchors; use them
+      -- directly so repair does not depend on text search disambiguation.
+      if not pos0_xp or not pos1_xp then
+        local results = ui.document:findAllText(hl.exact, true, 8, 200, false)
+        if not results or #results == 0 then
+          failed = failed + 1
+          return
+        end
+        local winner = results[1]
+        pos0_xp = type(winner.start) == "string" and winner.start or nil
+        pos1_xp = type(winner["end"]) == "string" and winner["end"] or nil
+      end
+
+      if not pos0_xp or not pos1_xp then
+        failed = failed + 1
+        return
+      end
+
+      write_annotation(ui, hl, pos0_xp, pos1_xp, sha256)
+      repaired = repaired + 1
+    end)
+
+    if not ok then failed = failed + 1 end
+  end
+
+  return { repaired = repaired, skipped = skipped, failed = failed }
+end
+
 -- ── public API ────────────────────────────────────────────────────────────
 
 -- Sync web highlights for the currently open book.
@@ -798,6 +852,34 @@ function AnnotationSync.push_changes_only(ui)
   local sha256 = get_sha256(ui)
   if not sha256 then return { pushed = 0, failed = 0 } end
   return push_changes(ui, sha256, nil)
+end
+
+-- Pull all active backend highlights and restore only those missing from the
+-- current KOReader annotation list. This fixes the "backend says resolved but
+-- local metadata is missing" case without changing normal pending-only sync.
+function AnnotationSync.repair_missing_highlights(ui)
+  if not ui or not ui.document then
+    error("AnnotationSync.repair_missing_highlights: no open document")
+  end
+  if not ui.annotation then
+    error("AnnotationSync.repair_missing_highlights: ui.annotation not available")
+  end
+  if not ui.rolling then
+    error("AnnotationSync.repair_missing_highlights: only EPUB documents are supported")
+  end
+
+  local sha256 = get_sha256(ui)
+  if not sha256 then
+    error("AnnotationSync.repair_missing_highlights: cannot determine book SHA256")
+  end
+
+  local result = repair_missing(ui, sha256)
+  if (result.repaired or 0) > 0
+      and ui.doc_settings
+      and type(ui.doc_settings.saveSetting) == "function" then
+    ui.doc_settings:saveSetting("annotations", ui.annotation.annotations)
+  end
+  return result
 end
 
 -- Persist a KOReader-originated delete before attempting network IO. This is

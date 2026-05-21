@@ -25,6 +25,8 @@ local specs = {
   "spec.test_ai_client",
   "spec.test_annotation_sync",
   "spec.test_auto_sync",
+  "spec.test_markdown_renderer",
+  "spec.test_chatgptviewer",
 }
 
 for _, spec in ipairs(specs) do

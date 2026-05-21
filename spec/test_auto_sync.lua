@@ -407,3 +407,36 @@ do
   H.eq("T-AS14 clearing a note does not queue a tombstone", #queue_calls, 0)
   H.eq("T-AS14 clearing a note does not schedule a delete push", #delete_calls, 0)
 end
+
+-- ── T-AS15: auto-sync disabled still queues tombstone on deletion ─────────
+-- Regression for "delete a synced highlight, then tap manual Sync → the
+-- deleted highlight comes back". Root cause: when auto_sync_web_highlights
+-- is off, main.lua used to skip queue_deleted_highlight entirely, so the
+-- backend row stayed active. On the next manual sync, reinstate_missing()
+-- found a resolved backend highlight with no matching local annotation and
+-- recreated it from the stored pos0/pos1. The fix queues the tombstone
+-- unconditionally; only the immediate background DELETE push remains gated
+-- on auto-sync (manual sync's drain_pending_deletes will pick it up).
+
+do
+  local spy = H.mock_koreader()
+  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
+          "askgpt.dialog_controller", "askgpt.background_jobs",
+          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+
+  local sync_calls, push_calls, push_new_calls, delete_calls, queue_calls = {}, {}, {}, {}, {}
+  setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = false }, push_new_calls, delete_calls, queue_calls)
+
+  local AskGPT    = require("main")
+  local fake_self = { ui = make_reader_ui() }
+
+  AskGPT.onAnnotationsModified(fake_self, {
+    { text = "synced highlight", bookaware_highlight_id = "hl-offline-delete", bookaware_sha256 = SHA },
+    nb_highlights_added = -1,
+    index_modified = -1,
+  })
+  H.eq("T-AS15 auto-sync off still queues tombstone", #queue_calls, 1)
+  H.eq("T-AS15 queued id forwarded", queue_calls[1], "hl-offline-delete")
+  H.eq("T-AS15 auto-sync off schedules no immediate push", #spy.scheduled, 0)
+  H.eq("T-AS15 auto-sync off does not call push_pending_deletes_only", #delete_calls, 0)
+end

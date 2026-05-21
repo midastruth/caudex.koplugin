@@ -241,13 +241,20 @@ end
 function AskGPT:onAnnotationsModified(items)
   if isFileManagerUI(self.ui) then return end
 
-  if isLocalDeletedBookAwareHighlightEvent(items) and autoSyncWebHighlightsEnabled() then
+  if isLocalDeletedBookAwareHighlightEvent(items) then
+    -- 关键：即便用户没开启自动同步，也要立刻把 tombstone 写入 sdr 的
+    -- pending_deletes 队列，否则下一次手动 sync 会因后端 row 仍是 resolved
+    -- 状态、本地缺失该 annotation，被 reinstate_missing() 复活，造成
+    -- “删除→点同步→高亮回来”的故障。
     local deleted_item = items[1]
     local ok_q, q_result = pcall(AnnotationSync.queue_deleted_highlight, self.ui, deleted_item)
     if not ok_q then
       print("[book-aware] queue deleted highlight failed: " .. tostring(q_result))
       return
     end
+    -- 立即向后端推送 DELETE 仅在自动同步开启时做；否则等用户下次手动
+    -- sync 时 drain_pending_deletes 处理。
+    if not autoSyncWebHighlightsEnabled() then return end
     UIManager:scheduleIn(1, function()
       if not autoSyncWebHighlightsEnabled() then return end
       local cfg_ok = Config.validate()

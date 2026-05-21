@@ -340,3 +340,70 @@ do
   for _, s in ipairs(spy.scheduled) do s.fn() end
   H.eq("T-AS12 config failure prevents immediate push", #delete_calls, 0)
 end
+
+-- ── T-AS13: deleting a highlight-with-note tombstones backend ─────────────
+-- KOReader's ReaderBookmark:removeItemByIndex emits `nb_notes_added = -1`
+-- (no nb_highlights_added) when the removed item carries a note. The bug
+-- before this regression test was: only nb_highlights_added < 0 was treated
+-- as a delete, so synced highlights that had a note attached were never
+-- tombstoned and got reinstated by the next sync's reinstate_missing pass.
+
+do
+  local spy = H.mock_koreader()
+  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
+          "askgpt.dialog_controller", "askgpt.background_jobs",
+          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+
+  local sync_calls, push_calls, push_new_calls, delete_calls, queue_calls = {}, {}, {}, {}, {}
+  setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls, delete_calls, queue_calls)
+
+  local AskGPT    = require("main")
+  local fake_self = { ui = make_reader_ui() }
+
+  AskGPT.onAnnotationsModified(fake_self, {
+    {
+      text = "synced highlight with note",
+      note = "my note",
+      drawer = "lighten",
+      bookaware_highlight_id = "hl-with-note",
+      bookaware_sha256 = SHA,
+    },
+    nb_notes_added = -1,
+    index_modified = -1,
+  })
+  H.eq("T-AS13 highlight-with-note deletion queues tombstone", #queue_calls, 1)
+  H.eq("T-AS13 queued id forwarded", queue_calls[1], "hl-with-note")
+  for _, s in ipairs(spy.scheduled) do s.fn() end
+  H.eq("T-AS13 push_pending_deletes_only called", #delete_calls, 1)
+end
+
+-- ── T-AS14: deleting only the note (highlight remains) does NOT tombstone ─
+-- ReaderHighlight emits `nb_highlights_added = 1, nb_notes_added = -1` (no
+-- index_modified) when the user clears the note but keeps the highlight.
+-- That is a metadata edit, not a removal, and must not enqueue a delete.
+
+do
+  local spy = H.mock_koreader()
+  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
+          "askgpt.dialog_controller", "askgpt.background_jobs",
+          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+
+  local sync_calls, push_calls, push_new_calls, delete_calls, queue_calls = {}, {}, {}, {}, {}
+  setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls, delete_calls, queue_calls)
+
+  local AskGPT    = require("main")
+  local fake_self = { ui = make_reader_ui() }
+
+  AskGPT.onAnnotationsModified(fake_self, {
+    {
+      text = "synced highlight, note cleared",
+      drawer = "lighten",
+      bookaware_highlight_id = "hl-keep-me",
+      bookaware_sha256 = SHA,
+    },
+    nb_highlights_added = 1,
+    nb_notes_added = -1,
+  })
+  H.eq("T-AS14 clearing a note does not queue a tombstone", #queue_calls, 0)
+  H.eq("T-AS14 clearing a note does not schedule a delete push", #delete_calls, 0)
+end

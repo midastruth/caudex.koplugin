@@ -66,14 +66,26 @@ local function isNewLocalHighlightEvent(items)
 end
 
 local function isLocalDeletedBookAwareHighlightEvent(items)
-  if type(items) ~= "table" or tonumber(items.nb_highlights_added or 0) >= 0 then
-    return false
-  end
+  if type(items) ~= "table" then return false end
   -- Deletions caused by applying web-side tombstones are already represented
   -- on the backend; do not echo them back as KOReader-originated deletes.
   if items.bookaware_origin == "tombstone_apply" then
     return false
   end
+  -- KOReader's ReaderBookmark:removeItemByIndex signals an actual annotation
+  -- removal via `index_modified < 0`, regardless of whether the removed item
+  -- was a plain highlight (nb_highlights_added = -1) or a highlight+note
+  -- (nb_notes_added = -1, with nb_highlights_added absent). Detecting on
+  -- nb_highlights_added alone misses the note case, which previously caused
+  -- backend-side highlights with notes to survive local deletion and get
+  -- reinstated by the next reinstate_missing pass.
+  local idx_mod = tonumber(items.index_modified)
+  local hl_delta = tonumber(items.nb_highlights_added or 0) or 0
+  local note_delta = tonumber(items.nb_notes_added or 0) or 0
+  local is_removal = (idx_mod ~= nil and idx_mod < 0)
+      or (hl_delta < 0)
+      or (note_delta < 0 and hl_delta <= 0)
+  if not is_removal then return false end
   local item = items[1]
   return type(item) == "table"
       and type(item.bookaware_highlight_id) == "string"

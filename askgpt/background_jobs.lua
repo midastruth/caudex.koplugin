@@ -117,11 +117,12 @@ local function open_result_viewer(ui, job)
   end
 
   UIManager:show(ChatGPTViewer:new {
-    ui            = ui,
-    title         = job.viewer_title or _("AI Result"),
-    text          = job.result_text,
-    onAskQuestion = on_ask_disabled,
-    onAddToNote   = on_add_note_disabled,
+    ui              = ui,
+    title           = job.viewer_title or _("AI Result"),
+    text            = job.result_text,
+    render_markdown = true,
+    onAskQuestion   = on_ask_disabled,
+    onAddToNote     = on_add_note_disabled,
   })
 end
 

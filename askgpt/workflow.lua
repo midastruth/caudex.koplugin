@@ -189,11 +189,12 @@ local function run_viewer_workflow(spec)
     end
 
     chatgpt_viewer = ChatGPTViewer:new {
-      ui            = spec.ui,
-      title         = spec.viewer_title,
-      text          = current_text,
-      onAskQuestion = handleFollowUp,
-      onAddToNote   = handleAddToNote,
+      ui              = spec.ui,
+      title           = spec.viewer_title,
+      text            = current_text,
+      render_markdown = true,
+      onAskQuestion   = handleFollowUp,
+      onAddToNote     = handleAddToNote,
     }
     UIManager:show(chatgpt_viewer)
   end)
@@ -369,11 +370,12 @@ function Workflow.ask(ui, options, default_highlighted)
   local function show_viewer(display_text, callbacks)
     if current_viewer then UIManager:close(current_viewer) end
     current_viewer = ChatGPTViewer:new {
-      ui             = ui,
-      title          = options.viewer_title or _("Ask GPT"),
-      text           = display_text,
-      close_callback = callbacks and callbacks.on_close or nil,
-      onAskQuestion  = callbacks and callbacks.on_ask or function(_, _)
+      ui              = ui,
+      title           = options.viewer_title or _("Ask GPT"),
+      text            = display_text,
+      render_markdown = true,
+      close_callback  = callbacks and callbacks.on_close or nil,
+      onAskQuestion   = callbacks and callbacks.on_ask or function(_, _)
         UIManager:show(InfoMessage:new { text = _("请等待回答完成。"), timeout = 2 })
       end,
       onAddToNote = callbacks and callbacks.on_note or function(_)

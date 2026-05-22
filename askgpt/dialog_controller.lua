@@ -65,6 +65,36 @@ function DialogController.show(ui, highlight_source)
     end,
   })
 
+  table.insert(buttons, {
+    text = _("How to read"),
+    callback = function()
+      local extra = input_dialog and Util.trim(input_dialog:getInputText()) or ""
+      UIManager:close(input_dialog)
+
+      -- 取书名/作者，用于构造"如何阅读这本书"的问题
+      local props  = (ui and ui.document and ui.document:getProps()) or {}
+      local title  = (type(props.title)   == "string" and props.title   ~= "") and props.title   or _("这本书")
+      local author = (type(props.authors) == "string" and props.authors ~= "") and props.authors or nil
+
+      local question = string.format(
+        _("请告诉我应该如何阅读《%s》%s。\n请给出：\n1. 这本书的核心主题与作者意图；\n2. 推荐的阅读方式及阅读顺序；\n3. 阅读时需要重点关注的章节或概念；\n4. 阅读时常见的难点和建议的应对方法；\n5. 可搭配阅读的延伸书籍或资料。"),
+        title,
+        author and ("（作者：" .. author .. "）") or ""
+      )
+      if extra ~= "" then
+        question = question .. "\n\n" .. _("用户附加要求：") .. extra
+      end
+
+      -- 复用 Ask 流式工作流；term 用书名，避免被当作高亮逐字解读
+      Workflow.ask(ui, {
+        term             = title,
+        highlighted_text = highlighted_text,
+        question         = question,
+        viewer_title     = _("How to read this book"),
+      }, highlighted_text)
+    end,
+  })
+
   local target_language = Config.get_translate_target()
   if target_language then
     table.insert(buttons, {

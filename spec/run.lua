@@ -20,6 +20,7 @@ local specs = {
   "spec.test_highlight",
   "spec.test_errors",
   "spec.test_main",
+  "spec.test_dialog_controller",
   "spec.test_workflow",
   "spec.test_background_jobs",
   "spec.test_ai_client",

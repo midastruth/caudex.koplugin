@@ -19,8 +19,8 @@
 --   Short text (< SHORT_TEXT_CHARS chars OR < SHORT_TEXT_WORDS words) uses
 --   SHORT_MARGIN instead of MIN_MARGIN (more conservative).
 
-local AiClient = require("askgpt.ai_client")
-local Util     = require("askgpt.util")
+local AiClient = require("caudex.ai_client")
+local Util     = require("caudex.util")
 local logger   = require("logger")
 
 local AnnotationSync = {}

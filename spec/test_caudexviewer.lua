@@ -1,4 +1,4 @@
--- Unit tests for chatgptviewer.lua Markdown rendering integration
+-- Unit tests for caudexviewer.lua Markdown rendering integration
 --
 -- 设计要点：
 --   1. 对所有 KOReader UI 组件使用 stub，不依赖真实渲染环境
@@ -8,13 +8,13 @@
 
 local H = require("spec.helpers")
 
-H.section("L. chatgptviewer.lua markdown integration")
+H.section("L. caudexviewer.lua markdown integration")
 
 -- ── Mock 基础设施 ─────────────────────────────────────────────────────────────
 
 local spy = H.mock_koreader()
 
--- 增强 device mock：chatgptviewer 需要 screen 方法和 input.group
+-- 增强 device mock：caudexviewer 需要 screen 方法和 input.group
 package.loaded["device"] = {
     hasKeys        = function() return false end,
     isTouchDevice  = function() return false end,
@@ -175,27 +175,27 @@ IC_mock.extend = function(self, props)
     return subclass
 end
 
--- ── 加载真实的 chatgptviewer.lua ──────────────────────────────────────────────
+-- ── 加载真实的 caudexviewer.lua ──────────────────────────────────────────────
 
-H.reset("chatgptviewer")
-local ChatGPTViewer = require("chatgptviewer")
+H.reset("caudexviewer")
+local CaudexViewer = require("caudexviewer")
 
 -- ── 1. _shouldUseHtml 静态帮助函数 ──────────────────────────────────────────
 
 H.is_false("_shouldUseHtml: render_markdown=false → false",
-    ChatGPTViewer._shouldUseHtml("hello", false, 8192))
+    CaudexViewer._shouldUseHtml("hello", false, 8192))
 
 H.is_true("_shouldUseHtml: short text + render_markdown=true → true",
-    ChatGPTViewer._shouldUseHtml("hello", true, 8192))
+    CaudexViewer._shouldUseHtml("hello", true, 8192))
 
 H.is_false("_shouldUseHtml: text exceeds markdown_max_size → false",
-    ChatGPTViewer._shouldUseHtml(string.rep("x", 100), true, 50))
+    CaudexViewer._shouldUseHtml(string.rep("x", 100), true, 50))
 
 H.is_false("_shouldUseHtml: empty text → false",
-    ChatGPTViewer._shouldUseHtml("", true, 8192))
+    CaudexViewer._shouldUseHtml("", true, 8192))
 
 H.is_false("_shouldUseHtml: nil text → false",
-    ChatGPTViewer._shouldUseHtml(nil, true, 8192))
+    CaudexViewer._shouldUseHtml(nil, true, 8192))
 
 -- ── 2. init() widget 选择 ────────────────────────────────────────────────────
 
@@ -204,7 +204,7 @@ created_stw = {}
 created_shw = {}
 mr_calls    = {}
 
-local v1 = ChatGPTViewer:new {
+local v1 = CaudexViewer:new {
     title = "test", text = "hello **world**", render_markdown = false,
 }
 H.eq("render_markdown=false: scroll_text_w is ScrollTextWidget",
@@ -217,7 +217,7 @@ created_stw = {}
 created_shw = {}
 mr_calls    = {}
 
-local v2 = ChatGPTViewer:new {
+local v2 = CaudexViewer:new {
     title = "test", text = "hello **world**", render_markdown = true,
 }
 H.eq("render_markdown=true: scroll_text_w is ScrollHtmlWidget",
@@ -242,7 +242,7 @@ created_shw = {}
 mr_calls    = {}
 
 local long_text = string.rep("x", 100)
-local v3 = ChatGPTViewer:new {
+local v3 = CaudexViewer:new {
     title = "test", text = long_text,
     render_markdown = true, markdown_max_size = 50,
 }
@@ -254,7 +254,7 @@ H.eq("text > markdown_max_size: MarkdownRenderer.toHtml NOT called",
 -- ── 3. update() 行为 ─────────────────────────────────────────────────────────
 
 -- 3a. render_markdown=false → 立即 close+show，不使用 scheduleIn
-local v4 = ChatGPTViewer:new { title = "t", text = "init", render_markdown = false }
+local v4 = CaudexViewer:new { title = "t", text = "init", render_markdown = false }
 spy.closed    = {}
 spy.shown     = {}
 spy.scheduled = {}
@@ -264,7 +264,7 @@ H.eq("update() non-md: immediately shows new viewer", #spy.shown,     1)
 H.eq("update() non-md: no scheduleIn used",           #spy.scheduled, 0)
 
 -- 3b. render_markdown=true → 走 debounce，使用 scheduleIn
-local v5 = ChatGPTViewer:new { title = "t", text = "init", render_markdown = true }
+local v5 = CaudexViewer:new { title = "t", text = "init", render_markdown = true }
 spy.closed    = {}
 spy.shown     = {}
 spy.scheduled = {}
@@ -287,7 +287,7 @@ H.eq("update() md: close during debounce does not close twice",     #spy.closed,
 H.is_false("update() md: close during debounce clears pending flag", v5._update_pending)
 
 -- 3e. active debounce still applies update when not closed
-local v6 = ChatGPTViewer:new { title = "t", text = "init", render_markdown = true }
+local v6 = CaudexViewer:new { title = "t", text = "init", render_markdown = true }
 spy.closed    = {}
 spy.shown     = {}
 spy.scheduled = {}

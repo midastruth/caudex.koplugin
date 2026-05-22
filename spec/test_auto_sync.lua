@@ -29,18 +29,18 @@ local function setup_stubs(sync_calls, push_calls, cfg_override, push_new_calls,
   push_new_calls = push_new_calls or {}
   delete_calls = delete_calls or {}
   queue_calls = queue_calls or {}
-  package.loaded["askgpt.dialog_controller"] = { show = function() end }
-  package.loaded["askgpt.background_jobs"]   = {
+  package.loaded["caudex.dialog_controller"] = { show = function() end }
+  package.loaded["caudex.background_jobs"]   = {
     submit_summary    = function() end,
     submit_analyze    = function() end,
     show_results_menu = function() end,
   }
-  package.loaded["askgpt.book_upload"] = {
+  package.loaded["caudex.book_upload"] = {
     upload_current = function() end,
     upload_file    = function() end,
   }
-  package.loaded["askgpt.book_sync"] = { sync_all = function() end }
-  package.loaded["askgpt.annotation_sync"] = {
+  package.loaded["caudex.book_sync"] = { sync_all = function() end }
+  package.loaded["caudex.annotation_sync"] = {
     sync = function(_ui)
       table.insert(sync_calls, true)
       return { resolved = 0, conflict = 0, failed = 0, pushed = 0, removed = 0 }
@@ -67,7 +67,7 @@ local function setup_stubs(sync_calls, push_calls, cfg_override, push_new_calls,
     end,
     list_conflicts = function() return {} end,
   }
-  package.loaded["askgpt.config"] = {
+  package.loaded["caudex.config"] = {
     validate = function() return true, {} end,
     get      = function() return cfg_override or {} end,
   }
@@ -80,16 +80,16 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls = {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = false })
 
-  local AskGPT   = require("main")
+  local Caudex   = require("main")
   local fake_self = { ui = make_reader_ui() }
-  AskGPT.init(fake_self)
+  Caudex.init(fake_self)
 
   for _, s in ipairs(spy.scheduled) do s.fn() end
 
@@ -100,16 +100,16 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls = {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true })
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
-  AskGPT.init(fake_self)
+  Caudex.init(fake_self)
 
   for _, s in ipairs(spy.scheduled) do s.fn() end
 
@@ -120,21 +120,21 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls = {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true })
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_fm   = {
     ui = {
       menu                 = { registerToMainMenu = function() end },
       addFileDialogButtons = function() end,
     }
   }
-  AskGPT.init(fake_fm)
+  Caudex.init(fake_fm)
 
   for _, s in ipairs(spy.scheduled) do s.fn() end
 
@@ -145,18 +145,18 @@ end
 
 do
   H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls = {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true })
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
   H.no_error("T-AS4 onCloseDocument runs without error", function()
-    AskGPT.onCloseDocument(fake_self)
+    Caudex.onCloseDocument(fake_self)
   end)
   H.eq("T-AS4 onCloseDocument triggers push_changes_only", #push_calls, 1)
 end
@@ -165,16 +165,16 @@ end
 
 do
   H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls = {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = false })
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
-  AskGPT.onCloseDocument(fake_self)
+  Caudex.onCloseDocument(fake_self)
 
   H.eq("T-AS5 config=false: onCloseDocument does not push", #push_calls, 0)
 end
@@ -183,18 +183,18 @@ end
 
 do
   H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls = {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true })
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
   H.no_error("T-AS6 onSaveSettings runs without error", function()
-    AskGPT.onSaveSettings(fake_self)
+    Caudex.onSaveSettings(fake_self)
   end)
   H.eq("T-AS6 onSaveSettings triggers push_changes_only", #push_calls, 1)
 end
@@ -203,17 +203,17 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls, push_new_calls = {}, {}, {}
   setup_stubs(sync_calls, push_calls, { auto_upload_new_highlights = true }, push_new_calls)
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
-  AskGPT.onAnnotationsModified(fake_self, {
+  Caudex.onAnnotationsModified(fake_self, {
     { text = "local highlight", pos0 = "/p.0", pos1 = "/p.15" },
     nb_highlights_added = 1,
   })
@@ -226,17 +226,17 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls, push_new_calls = {}, {}, {}
   setup_stubs(sync_calls, push_calls, { auto_upload_new_highlights = true }, push_new_calls)
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
-  AskGPT.onAnnotationsModified(fake_self, {
+  Caudex.onAnnotationsModified(fake_self, {
     { text = "web highlight", bookaware_highlight_id = "hl-web" },
     nb_highlights_added = 1,
   })
@@ -248,17 +248,17 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls, push_new_calls = {}, {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls)
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
-  AskGPT.onAnnotationsModified(fake_self, {
+  Caudex.onAnnotationsModified(fake_self, {
     { text = "local highlight", pos0 = "/p.0", pos1 = "/p.15" },
     nb_highlights_added = 1,
   })
@@ -270,17 +270,17 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls, push_new_calls, delete_calls, queue_calls = {}, {}, {}, {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls, delete_calls, queue_calls)
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
-  AskGPT.onAnnotationsModified(fake_self, {
+  Caudex.onAnnotationsModified(fake_self, {
     { text = "synced highlight", bookaware_highlight_id = "hl-delete-me", bookaware_sha256 = SHA },
     nb_highlights_added = -1,
     index_modified = -1,
@@ -296,17 +296,17 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls, push_new_calls, delete_calls = {}, {}, {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls, delete_calls)
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
-  AskGPT.onAnnotationsModified(fake_self, {
+  Caudex.onAnnotationsModified(fake_self, {
     { text = "web deleted highlight", bookaware_highlight_id = "hl-web-deleted" },
     nb_highlights_added = -1,
     index_modified = -1,
@@ -320,18 +320,18 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls, push_new_calls, delete_calls, queue_calls = {}, {}, {}, {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls, delete_calls, queue_calls)
-  package.loaded["askgpt.config"].validate = function() return false, "bad config" end
+  package.loaded["caudex.config"].validate = function() return false, "bad config" end
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
-  AskGPT.onAnnotationsModified(fake_self, {
+  Caudex.onAnnotationsModified(fake_self, {
     { text = "synced highlight", bookaware_highlight_id = "hl-queue-only", bookaware_sha256 = SHA },
     nb_highlights_added = -1,
     index_modified = -1,
@@ -350,17 +350,17 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls, push_new_calls, delete_calls, queue_calls = {}, {}, {}, {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls, delete_calls, queue_calls)
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
-  AskGPT.onAnnotationsModified(fake_self, {
+  Caudex.onAnnotationsModified(fake_self, {
     {
       text = "synced highlight with note",
       note = "my note",
@@ -384,17 +384,17 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls, push_new_calls, delete_calls, queue_calls = {}, {}, {}, {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = true }, push_new_calls, delete_calls, queue_calls)
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
-  AskGPT.onAnnotationsModified(fake_self, {
+  Caudex.onAnnotationsModified(fake_self, {
     {
       text = "synced highlight, note cleared",
       drawer = "lighten",
@@ -420,17 +420,17 @@ end
 
 do
   local spy = H.mock_koreader()
-  H.reset("main", "askgpt.config", "askgpt.annotation_sync",
-          "askgpt.dialog_controller", "askgpt.background_jobs",
-          "askgpt.book_upload", "askgpt.book_sync", "update_checker")
+  H.reset("main", "caudex.config", "caudex.annotation_sync",
+          "caudex.dialog_controller", "caudex.background_jobs",
+          "caudex.book_upload", "caudex.book_sync", "update_checker")
 
   local sync_calls, push_calls, push_new_calls, delete_calls, queue_calls = {}, {}, {}, {}, {}
   setup_stubs(sync_calls, push_calls, { auto_sync_web_highlights = false }, push_new_calls, delete_calls, queue_calls)
 
-  local AskGPT    = require("main")
+  local Caudex    = require("main")
   local fake_self = { ui = make_reader_ui() }
 
-  AskGPT.onAnnotationsModified(fake_self, {
+  Caudex.onAnnotationsModified(fake_self, {
     { text = "synced highlight", bookaware_highlight_id = "hl-offline-delete", bookaware_sha256 = SHA },
     nb_highlights_added = -1,
     index_modified = -1,

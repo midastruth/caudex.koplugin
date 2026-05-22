@@ -2,12 +2,12 @@
 -- Run from the plugin root directory.
 
 local base = (debug.getinfo(1, "S").source:match("@(.+)/spec/run%.lua$"))
-          or "/home/midas/workspace/projects/askgpt.koplugin"
+          or "/home/midas/workspace/projects/caudex.koplugin"
 
--- Add plugin root to package.path so both "askgpt.xxx" and "spec.xxx" resolve
+-- Add plugin root to package.path so both "caudex.xxx" and "spec.xxx" resolve
 package.path = base .. "/?.lua;" .. base .. "/?/init.lua;" .. package.path
 
-print("askgpt.koplugin – unit test suite")
+print("caudex.koplugin – unit test suite")
 print("base: " .. base)
 
 -- Load helpers first (shared state for counts)
@@ -27,7 +27,7 @@ local specs = {
   "spec.test_annotation_sync",
   "spec.test_auto_sync",
   "spec.test_markdown_renderer",
-  "spec.test_chatgptviewer",
+  "spec.test_caudexviewer",
 }
 
 for _, spec in ipairs(specs) do

@@ -1,7 +1,7 @@
 local H         = require("spec.helpers")
-local Highlight = require("askgpt.highlight")
+local Highlight = require("caudex.highlight")
 
-H.section("C. askgpt/highlight.lua")
+H.section("C. caudex/highlight.lua")
 
 local ht, ctx
 

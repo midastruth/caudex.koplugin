@@ -6,8 +6,8 @@ local http   = require("socket.http")
 local https  = require("ssl.https")
 local socket = require("socket")
 
-local Util   = require("askgpt.util")
-local Config = require("askgpt.config")
+local Util   = require("caudex.util")
+local Config = require("caudex.config")
 
 local REQUEST_TIMEOUT          = 10   -- 秒
 local BOOK_LOOKUP_TIMEOUT      = 30   -- 秒
@@ -459,7 +459,7 @@ local function multipart_header_value(value)
 end
 
 local function multipart_boundary()
-  return "----askgpt-koreader-" .. tostring(os.time()) .. "-" .. tostring(math.random(1000000, 9999999))
+  return "----caudex-koreader-" .. tostring(os.time()) .. "-" .. tostring(math.random(1000000, 9999999))
 end
 
 local function pick_epub_filepath(params)
@@ -970,8 +970,8 @@ end
 -- 在子进程中调用；把增量文字和最终结果写入 tmpfile，供主进程轮询。
 -- 写入格式：
 --   增量中：直接写累积文字
---   完成时：累积文字 .. "<<ASKGPT_DONE>>" .. json(final)
---   出错时："<<ASKGPT_ERROR>>" .. message
+--   完成时：累积文字 .. "<<CAUDEX_DONE>>" .. json(final)
+--   出错时："<<CAUDEX_ERROR>>" .. message
 function AiClient.streamAsk(params, tmpfile)
   if type(params) ~= "table" then
     error("streamAsk expects a parameter table.")
@@ -1015,10 +1015,10 @@ function AiClient.streamAsk(params, tmpfile)
         sources    = ev.sources,
         session_id = ev.session_id,
       })
-      write_tmp(accumulated .. "<<ASKGPT_DONE>>" .. final_blob)
+      write_tmp(accumulated .. "<<CAUDEX_DONE>>" .. final_blob)
     elseif ev.code ~= nil then
       finished = true
-      write_tmp("<<ASKGPT_ERROR>>" .. tostring(ev.message or ev.code))
+      write_tmp("<<CAUDEX_ERROR>>" .. tostring(ev.message or ev.code))
     end
   end
 
@@ -1062,11 +1062,11 @@ function AiClient.streamAsk(params, tmpfile)
 
   if not finished then
     if not ok then
-      write_tmp("<<ASKGPT_ERROR>>Connection failed: " .. tostring(res))
+      write_tmp("<<CAUDEX_ERROR>>Connection failed: " .. tostring(res))
     elseif not res or (tonumber(code) and tonumber(code) ~= 200) then
-      write_tmp("<<ASKGPT_ERROR>>HTTP " .. tostring(code))
+      write_tmp("<<CAUDEX_ERROR>>HTTP " .. tostring(code))
     else
-      write_tmp("<<ASKGPT_ERROR>>Stream ended without final event")
+      write_tmp("<<CAUDEX_ERROR>>Stream ended without final event")
     end
   end
 end

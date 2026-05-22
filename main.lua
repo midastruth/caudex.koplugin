@@ -6,16 +6,16 @@ local ConfirmBox   = require("ui/widget/confirmbox")
 local UIManager    = require("ui/uimanager")
 local _ = require("gettext")
 
-local Config           = require("askgpt.config")
-local DialogController = require("askgpt.dialog_controller")
-local BackgroundJobs   = require("askgpt.background_jobs")
-local BookUpload       = require("askgpt.book_upload")
-local BookSync         = require("askgpt.book_sync")
+local Config           = require("caudex.config")
+local DialogController = require("caudex.dialog_controller")
+local BackgroundJobs   = require("caudex.background_jobs")
+local BookUpload       = require("caudex.book_upload")
+local BookSync         = require("caudex.book_sync")
 local UpdateChecker    = require("update_checker")
-local AnnotationSync   = require("askgpt.annotation_sync")
+local AnnotationSync   = require("caudex.annotation_sync")
 
-local AskGPT = InputContainer:new {
-  name        = "askgpt",
+local Caudex = InputContainer:new {
+  name        = "caudex",
   is_doc_only = false,
 }
 
@@ -92,14 +92,14 @@ local function isLocalDeletedBookAwareHighlightEvent(items)
       and item.bookaware_highlight_id ~= ""
 end
 
-local function placeAskGPTBeforeToc()
+local function placeCaudexBeforeToc()
   local ok, order = pcall(require, "ui/elements/reader_menu_order")
   if not ok or type(order) ~= "table" or type(order.navi) ~= "table" then
     return false
   end
 
   for i = #order.navi, 1, -1 do
-    if order.navi[i] == "askgpt" then
+    if order.navi[i] == "caudex" then
       table.remove(order.navi, i)
     end
   end
@@ -111,7 +111,7 @@ local function placeAskGPTBeforeToc()
       break
     end
   end
-  table.insert(order.navi, insert_at, "askgpt")
+  table.insert(order.navi, insert_at, "caudex")
   return true
 end
 
@@ -119,7 +119,7 @@ local function checkNetworkAndConfig()
   local config_valid, config_result = Config.validate()
   if not config_valid then
     UIManager:show(InfoMessage:new {
-      text    = _("AskGPT插件配置错误：") .. config_result .. _("\n请检查configuration.lua文件。"),
+      text    = _("Caudex插件配置错误：") .. config_result .. _("\n请检查configuration.lua文件。"),
       timeout = 5,
     })
     return false
@@ -134,14 +134,14 @@ local function checkNetworkAndConfig()
   return true
 end
 
-function AskGPT:init()
+function Caudex:init()
   self.ui.menu:registerToMainMenu(self)
 
   -- 文件管理器：长按书籍文件弹出"上传到 Book-Aware"按钮
   -- 注意：FileManager 加载插件时 file_chooser 可能尚未创建，不能用
   -- self.ui.file_chooser 判断；addFileDialogButtons 方法才是稳定特征。
   if isFileManagerUI(self.ui) then
-    self.ui:addFileDialogButtons("askgpt_upload_file", function(file, is_file)
+    self.ui:addFileDialogButtons("caudex_upload_file", function(file, is_file)
       if not is_file then return end
       local ext = tostring(file or ""):lower():match("%.([^.]+)$")
       if ext ~= "epub" then return end
@@ -165,9 +165,9 @@ function AskGPT:init()
     return
   end
 
-  self.ui.highlight:addToHighlightDialog("askgpt_GPT", function(_reader_highlight_instance)
+  self.ui.highlight:addToHighlightDialog("caudex_GPT", function(_reader_highlight_instance)
     return {
-      text    = _("Ask GPT"),
+      text    = _("Caudex"),
       enabled = Device:hasClipboard(),
       callback = function()
         if not checkNetworkAndConfig() then return end
@@ -181,7 +181,7 @@ function AskGPT:init()
           end)
           if not success then
             UIManager:show(InfoMessage:new {
-              text    = _("AskGPT运行失败：") .. tostring(error_msg),
+              text    = _("Caudex运行失败：") .. tostring(error_msg),
               timeout = 5,
             })
           end
@@ -238,7 +238,7 @@ local function pushWebHighlightChanges(self, reason)
   end
 end
 
-function AskGPT:onAnnotationsModified(items)
+function Caudex:onAnnotationsModified(items)
   if isFileManagerUI(self.ui) then return end
 
   if isLocalDeletedBookAwareHighlightEvent(items) then
@@ -294,11 +294,11 @@ function AskGPT:onAnnotationsModified(items)
   end)
 end
 
-function AskGPT:onSaveSettings()
+function Caudex:onSaveSettings()
   pushWebHighlightChanges(self, "save")
 end
 
-function AskGPT:onCloseDocument()
+function Caudex:onCloseDocument()
   pushWebHighlightChanges(self, "close")
 end
 
@@ -373,9 +373,9 @@ runManualAnnotationSync = function(self, force)
   })
 end
 
--- AskGPT 入口：阅读器中放到 Navigation/导航 菜单的目录上方；文件管理器中仍放到 Tools/工具。
-function AskGPT:addToMainMenu(menu_items)
-  local askgpt_items = {
+-- Caudex 入口：阅读器中放到 Navigation/导航 菜单的目录上方；文件管理器中仍放到 Tools/工具。
+function Caudex:addToMainMenu(menu_items)
+  local caudex_items = {
     {
       text = _("Recent results"),
       callback = function()
@@ -384,7 +384,7 @@ function AskGPT:addToMainMenu(menu_items)
         end)
         if not ok then
           UIManager:show(InfoMessage:new {
-            text    = _("打开 AskGPT 最近结果失败：") .. tostring(err),
+            text    = _("打开 Caudex 最近结果失败：") .. tostring(err),
             timeout = 6,
           })
         end
@@ -393,7 +393,7 @@ function AskGPT:addToMainMenu(menu_items)
   }
 
   if not isFileManagerUI(self.ui) then
-    table.insert(askgpt_items, {
+    table.insert(caudex_items, {
       text = _("Upload current book to Book-Aware"),
       callback = function()
         if not checkNetworkAndConfig() then return end
@@ -404,7 +404,7 @@ function AskGPT:addToMainMenu(menu_items)
     })
   end
 
-  table.insert(askgpt_items, {
+  table.insert(caudex_items, {
     text = _("Book-Aware book sync"),
     callback = function()
       if not checkNetworkAndConfig() then return end
@@ -415,7 +415,7 @@ function AskGPT:addToMainMenu(menu_items)
   })
 
   if not isFileManagerUI(self.ui) then
-    table.insert(askgpt_items, {
+    table.insert(caudex_items, {
       text = _("Sync web highlights"),
       callback = function()
         if not checkNetworkAndConfig() then return end
@@ -427,7 +427,7 @@ function AskGPT:addToMainMenu(menu_items)
   end
 
   if not isFileManagerUI(self.ui) then
-    table.insert(askgpt_items, {
+    table.insert(caudex_items, {
       text = _("View conflict highlights"),
       callback = function()
         if not checkNetworkAndConfig() then return end
@@ -466,8 +466,8 @@ function AskGPT:addToMainMenu(menu_items)
     })
   end
 
-  table.insert(askgpt_items, {
-    text = _("检查 AskGPT 更新"),
+  table.insert(caudex_items, {
+    text = _("检查 Caudex 更新"),
     callback = function()
       if not NetworkMgr:isOnline() then
         UIManager:show(InfoMessage:new {
@@ -484,15 +484,15 @@ function AskGPT:addToMainMenu(menu_items)
 
   local sorting_hint = "tools"
   if not isFileManagerUI(self.ui) then
-    placeAskGPTBeforeToc()
+    placeCaudexBeforeToc()
     sorting_hint = "navi"
   end
 
-  menu_items.askgpt = {
-    text = _("AskGPT"),
+  menu_items.caudex = {
+    text = _("Caudex"),
     sorting_hint = sorting_hint,
-    sub_item_table = askgpt_items,
+    sub_item_table = caudex_items,
   }
 end
 
-return AskGPT
+return Caudex

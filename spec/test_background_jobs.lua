@@ -1,24 +1,24 @@
 local H = require("spec.helpers")
 
-H.section("G. askgpt/background_jobs.lua")
+H.section("G. caudex/background_jobs.lua")
 
 local spy = H.mock_koreader()
 
 -- ── Mock BackgroundJobs dependencies ─────────────────────────────────────
 
-H.reset("askgpt.background_jobs", "askgpt.ai_client", "askgpt.formatter", "askgpt.errors")
+H.reset("caudex.background_jobs", "caudex.ai_client", "caudex.formatter", "caudex.errors")
 
-package.loaded["askgpt.ai_client"] = {
+package.loaded["caudex.ai_client"] = {
   summarizeContent = function() return { summary = "ok" } end,
   analyzeContent   = function() return {} end,
 }
-package.loaded["askgpt.formatter"] = {
+package.loaded["caudex.formatter"] = {
   summary  = function() return "formatted summary" end,
   analysis = function() return "formatted analysis" end,
 }
 
 local errors_shown = {}
-package.loaded["askgpt.errors"] = {
+package.loaded["caudex.errors"] = {
   show              = function(msg) table.insert(errors_shown, msg) end,
   show_request_error = function(msg) table.insert(errors_shown, msg) end,
 }
@@ -33,7 +33,7 @@ local fake_ui = {
 
 spy.ffiutil._fork_fails = true
 
-local BJ = require("askgpt.background_jobs")
+local BJ = require("caudex.background_jobs")
 
 errors_shown = {}
 spy.shown    = {}
@@ -86,7 +86,7 @@ H.is_true("empty content: error shown", #errors_shown > 0)
 
 -- ── Scenario 5: show_results_menu with done jobs is robust ───────────────
 
-H.reset("askgpt.background_jobs")
+H.reset("caudex.background_jobs")
 spy.ffiutil._fork_fails = false
 
 -- Override scheduleIn to fire immediately (simulate instant subprocess done)
@@ -100,7 +100,7 @@ package.loaded["json"].decode = function(_raw)
   return { status = "done", text = "done result" }
 end
 
-local BJ2 = require("askgpt.background_jobs")
+local BJ2 = require("caudex.background_jobs")
 
 -- Regression: a non-string highlighted_text used to make Recent results crash
 -- while building snippets.

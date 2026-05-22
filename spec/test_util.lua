@@ -1,7 +1,7 @@
 local H    = require("spec.helpers")
-local Util = require("askgpt.util")
+local Util = require("caudex.util")
 
-H.section("A. askgpt/util.lua")
+H.section("A. caudex/util.lua")
 
 -- trim
 H.eq("trim(nil) -> ''",           Util.trim(nil),   "")

@@ -5,8 +5,8 @@ local UIManager   = require("ui/uimanager")
 local InfoMessage = require("ui/widget/infomessage")
 local _           = require("gettext")
 
-local AiClient = require("askgpt.ai_client")
-local Util     = require("askgpt.util")
+local AiClient = require("caudex.ai_client")
+local Util     = require("caudex.util")
 
 local BookUpload = {}
 
@@ -104,7 +104,7 @@ function BookUpload.upload_file(filepath)
   if type(existing) == "table" and existing.ok then
     local indexed = existing.indexed and true or false
     local suffix = indexed
-        and _("\n后端已有索引，可以直接使用 AskGPT。")
+        and _("\n后端已有索引，可以直接使用 Caudex。")
         or _("\n后端已有原始书籍，但尚未索引；需要后端转换/绑定 Markdown。")
     show(_("Book-Aware 已存在本书，无需重复上传。") .. suffix, indexed and 5 or 8)
     return
@@ -124,7 +124,7 @@ function BookUpload.upload_file(filepath)
 
   local indexed = type(result) == "table" and type(result.index) == "table"
   local suffix = indexed
-      and _("\n已生成索引，可以直接使用 AskGPT。")
+      and _("\n已生成索引，可以直接使用 Caudex。")
       or _("\n已上传原始 EPUB，但后端未返回索引。")
   show(_("Book-Aware 上传完成。") .. suffix, indexed and 5 or 8)
 end
@@ -156,7 +156,7 @@ function BookUpload.upload_current(ui)
   if type(existing) == "table" and existing.ok then
     local indexed = existing.indexed and true or false
     local suffix = indexed
-        and _("\n后端已有索引，可以直接使用 AskGPT。")
+        and _("\n后端已有索引，可以直接使用 Caudex。")
         or _("\n后端已有原始书籍，但尚未索引；需要后端转换/绑定 Markdown。")
     show(_("Book-Aware 已存在本书，无需重复上传。") .. suffix, indexed and 5 or 8)
     return
@@ -185,7 +185,7 @@ function BookUpload.upload_current(ui)
 
   local indexed = type(result) == "table" and type(result.index) == "table"
   local suffix = indexed
-      and _("\n已生成索引，可以直接使用 AskGPT。")
+      and _("\n已生成索引，可以直接使用 Caudex。")
       or _("\n已上传原始 EPUB，但后端未返回索引。")
   show(_("Book-Aware 上传完成。") .. suffix, indexed and 5 or 8)
 end

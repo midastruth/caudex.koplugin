@@ -42,7 +42,7 @@ which step broke.
    the bump commit before publishing.
 8. **Build & publish release** — for KOReader‑style Lua plugins (`_meta.lua` +
    `main.lua`) it builds `<plugin>-<version>-<sha>.zip` from the tracked
-   top‑level Lua files plus `askgpt/`, includes the SHA256 in the release
+   top‑level Lua files plus `caudex/`, includes the SHA256 in the release
    notes, records `RELEASE_START_TS`, then runs `gh release create <tag>
    [asset] --target <current-branch> --title <tag> --notes-file …` and prints
    the release URL.

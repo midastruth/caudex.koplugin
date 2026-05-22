@@ -1,6 +1,6 @@
 local H = require("spec.helpers")
 
-H.section("H. askgpt/ai_client.lua")
+H.section("H. caudex/ai_client.lua")
 
 -- ── shared state ──────────────────────────────────────────────────────────
 
@@ -36,7 +36,7 @@ end
 -- ── helper: fresh AiClient with controllable request mocks ────────────────
 
 local function load_ai_client(config)
-  H.reset("askgpt.ai_client", "askgpt.config", "askgpt.util")
+  H.reset("caudex.ai_client", "caudex.config", "caudex.util")
   package.loaded["socket.http"] = http_lib
   package.loaded["ssl.https"]   = https_lib
   package.loaded["socket"]      = { sleep = function() end }
@@ -59,11 +59,11 @@ local function load_ai_client(config)
   else
     cfg = { reader_ai_base_url = config or "https://example.com" }
   end
-  package.loaded["askgpt.config"] = {
+  package.loaded["caudex.config"] = {
     get      = function() return cfg end,
     validate = function() return true end,
   }
-  return require("askgpt.ai_client")
+  return require("caudex.ai_client")
 end
 
 -- ── Section 1: timeout propagation ────────────────────────────────────────
@@ -120,7 +120,7 @@ end
 
 -- EPUB import prefers multipart/form-data when a local filepath is supplied.
 do
-  local tmp = "/tmp/askgpt-ai-client-multipart.epub"
+  local tmp = "/tmp/caudex-ai-client-multipart.epub"
   local f = io.open(tmp, "wb"); f:write("EPUBDATA"); f:close()
   local seen_content_type, seen_body = nil, ""
   http_lib = { TIMEOUT = 10, request = function(_) return nil, nil, nil end }
@@ -151,7 +151,7 @@ end
 -- Multipart upload closes the EPUB handle even if the transport fails before
 -- LuaSocket consumes the request source.
 do
-  local target = "/tmp/askgpt-close-on-early-fail.epub"
+  local target = "/tmp/caudex-close-on-early-fail.epub"
   local original_io_open = io.open
   local open_count, close_count = 0, 0
   http_lib = { TIMEOUT = 10, request = function(_) return nil, nil, nil end }
@@ -162,7 +162,7 @@ do
     end,
   }
   local AiClient = load_ai_client()
-  package.loaded["askgpt.util"].file_stat = function(path)
+  package.loaded["caudex.util"].file_stat = function(path)
     if path == target then return 8 end
     return nil
   end
@@ -197,8 +197,8 @@ do
   for _ = 1, 3 do request_results[#request_results+1] = {nil, nil, nil} end
   last_https_timeout = nil
   local AiClient = load_ai_client()
-  pcall(AiClient.downloadBook, "abc123", "/tmp/askgpt-test-download.epub")
-  os.remove("/tmp/askgpt-test-download.epub")
+  pcall(AiClient.downloadBook, "abc123", "/tmp/caudex-test-download.epub")
+  os.remove("/tmp/caudex-test-download.epub")
   H.eq("downloadBook uses 300s timeout", last_https_timeout, 300)
 end
 
@@ -297,7 +297,7 @@ end
 -- downloadBook must fail loudly if the local file write fails, even if the
 -- HTTP layer would otherwise report 200.
 do
-  local target = "/tmp/askgpt-write-fail.epub"
+  local target = "/tmp/caudex-write-fail.epub"
   local removed = {}
   local original_io_open = io.open
   local original_os_remove = os.remove
@@ -335,7 +335,7 @@ end
 
 -- downloadBook also treats close/flush failure as a failed local write.
 do
-  local target = "/tmp/askgpt-close-fail.epub"
+  local target = "/tmp/caudex-close-fail.epub"
   local removed = {}
   local original_io_open = io.open
   local original_os_remove = os.remove

@@ -1,6 +1,6 @@
 -- 格式化 AI 响应为可读文本块
 local _ = require("gettext")
-local Util = require("askgpt.util")
+local Util = require("caudex.util")
 
 local Formatter = {}
 

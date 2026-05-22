@@ -3,10 +3,10 @@ local InputDialog = require("ui/widget/inputdialog")
 local UIManager   = require("ui/uimanager")
 local _ = require("gettext")
 
-local Highlight = require("askgpt.highlight")
-local Config    = require("askgpt.config")
-local Util      = require("askgpt.util")
-local Workflow  = require("askgpt.workflow")
+local Highlight = require("caudex.highlight")
+local Config    = require("caudex.config")
+local Util      = require("caudex.util")
+local Workflow  = require("caudex.workflow")
 
 local DialogController = {}
 
@@ -31,7 +31,7 @@ function DialogController.show(ui, highlight_source)
           term             = highlighted_text,
           highlighted_text = highlighted_text,
           question         = question,
-          viewer_title     = _("Ask GPT"),
+          viewer_title     = _("Caudex"),
         }, highlighted_text)
       end,
     },

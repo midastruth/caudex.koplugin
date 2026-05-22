@@ -1,10 +1,10 @@
 local H = require("spec.helpers")
 
-H.section("D. askgpt/errors.lua")
+H.section("D. caudex/errors.lua")
 
 local spy = H.mock_koreader()
-H.reset("askgpt.errors")
-local Errors = require("askgpt.errors")
+H.reset("caudex.errors")
+local Errors = require("caudex.errors")
 
 local function last_shown_text()
   local w = spy.shown[#spy.shown]

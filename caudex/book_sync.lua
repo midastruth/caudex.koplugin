@@ -4,9 +4,9 @@ local InfoMessage = require("ui/widget/infomessage")
 local Menu        = require("ui/widget/menu")
 local _           = require("gettext")
 
-local AiClient = require("askgpt.ai_client")
-local Config   = require("askgpt.config")
-local Util     = require("askgpt.util")
+local AiClient = require("caudex.ai_client")
+local Config   = require("caudex.config")
+local Util     = require("caudex.util")
 
 local BookSync = {}
 
@@ -133,7 +133,7 @@ local function download_one(book, sync_dir, current, total)
     return "skipped", target
   end
 
-  local tmp = target .. ".askgpt-download"
+  local tmp = target .. ".caudex-download"
   os.remove(tmp)
   if current and total then
     show(string.format(_("正在同步 Book-Aware 书籍 %d/%d：\n%s"), current, total, book_label(book)), 1)
@@ -285,7 +285,7 @@ function BookSync.sync_all(ui)
         skipped = skipped + 1
       else
         failed = failed + 1
-        print("AskGPT BookSync download failed: " .. tostring(detail))
+        print("Caudex BookSync download failed: " .. tostring(detail))
       end
     end
   end

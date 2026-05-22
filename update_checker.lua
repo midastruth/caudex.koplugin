@@ -1,4 +1,4 @@
--- GitHub release checker + optional one-click updater for AskGPT.
+-- GitHub release checker + optional one-click updater for Caudex.
 --
 -- Safety notes:
 --   * We never install silently.  The user must confirm from the UI.
@@ -15,7 +15,7 @@ local ConfirmBox  = require("ui/widget/confirmbox")
 local UIManager   = require("ui/uimanager")
 local _           = require("gettext")
 
-local RELEASES_URL = "https://api.github.com/repos/midastruth/askgpt.koplugin/releases/latest"
+local RELEASES_URL = "https://api.github.com/repos/midastruth/caudex.koplugin/releases/latest"
 local TIMEOUT      = 10  -- seconds
 local MAX_REDIRECTS = 5
 
@@ -122,7 +122,7 @@ local function request_url(url, extra_headers)
 
     local headers = {
       ["Accept"]     = "application/vnd.github+json",
-      ["User-Agent"] = "askgpt-koplugin-updater",
+      ["User-Agent"] = "caudex-koplugin-updater",
     }
     if type(extra_headers) == "table" then
       for k, v in pairs(extra_headers) do headers[k] = v end
@@ -190,7 +190,7 @@ local function choose_download_url(release)
         local lower = name:lower()
         if lower:match("%.zip$") then
           fallback_zip = fallback_zip or asset.browser_download_url
-          if lower:match("askgpt%.koplugin") then
+          if lower:match("caudex%.koplugin") then
             best_zip = asset.browser_download_url
             break
           end
@@ -227,7 +227,7 @@ local function download_zip(url)
     return nil, "No downloadable zip asset was found in the latest release."
   end
 
-  local path = tmp_path("askgpt-update-" .. timestamp() .. ".zip")
+  local path = tmp_path("caudex-update-" .. timestamp() .. ".zip")
 
   -- Prefer curl/wget: they handle CDN redirects and binary downloads
   -- reliably without Content-Type negotiation issues (HTTP 415).
@@ -261,14 +261,14 @@ end
 
 local function find_plugin_payload(staging_dir)
   -- Accept either:
-  --   staging/askgpt.koplugin/_meta.lua
+  --   staging/caudex.koplugin/_meta.lua
   --   staging/<github-zipball-root>/_meta.lua
   --   staging/_meta.lua
   if file_exists(staging_dir .. "/_meta.lua") and file_exists(staging_dir .. "/main.lua") then
     return staging_dir
   end
 
-  local preferred = staging_dir .. "/askgpt.koplugin"
+  local preferred = staging_dir .. "/caudex.koplugin"
   if file_exists(preferred .. "/_meta.lua") and file_exists(preferred .. "/main.lua") then
     return preferred
   end
@@ -285,7 +285,7 @@ end
 
 local function install_zip(zip_path)
   local dst = plugin_dir()
-  local staging = tmp_path("askgpt-update-staging-" .. timestamp())
+  local staging = tmp_path("caudex-update-staging-" .. timestamp())
 
   local ok, err = run_command("command -v unzip >/dev/null 2>&1")
   if not ok then
@@ -300,14 +300,14 @@ local function install_zip(zip_path)
 
   local src = find_plugin_payload(staging)
   if not src then
-    return false, "The update package does not look like askgpt.koplugin."
+    return false, "The update package does not look like caudex.koplugin."
   end
 
-  local config_backup = tmp_path("askgpt-configuration-" .. timestamp() .. ".lua")
-  local script = tmp_path("askgpt-install-" .. timestamp() .. ".sh")
+  local config_backup = tmp_path("caudex-configuration-" .. timestamp() .. ".lua")
+  local script = tmp_path("caudex-install-" .. timestamp() .. ".sh")
   -- Keep backup in /tmp instead of next to the plugin. Some devices allow
   -- writing inside the plugin dir but not creating siblings in its parent.
-  local backup_dir = tmp_path("askgpt-backup-" .. timestamp())
+  local backup_dir = tmp_path("caudex-backup-" .. timestamp())
 
   local script_body = table.concat({
     "#!/bin/sh",
@@ -347,21 +347,21 @@ end
 
 local function install_update(info, skip_initial_message)
   if not skip_initial_message then
-    show_message(_("AskGPT 正在下载 ") .. tostring(info.tag_name or info.latest) .. "...", 2)
+    show_message(_("Caudex 正在下载 ") .. tostring(info.tag_name or info.latest) .. "...", 2)
   end
 
   local zip_path, err = download_zip(info.download_url)
   if not zip_path then
-    show_message(_("AskGPT 更新失败：\n") .. tostring(err), 8)
+    show_message(_("Caudex 更新失败：\n") .. tostring(err), 8)
     return false
   end
 
-  show_message(_("AskGPT 正在安装..."), 2)
+  show_message(_("Caudex 正在安装..."), 2)
   local ok, install_result = install_zip(zip_path)
   run_command("rm -f " .. shell_quote(zip_path))
 
   if not ok then
-    show_message(_("AskGPT 更新失败：\n") .. tostring(install_result), 10)
+    show_message(_("Caudex 更新失败：\n") .. tostring(install_result), 10)
     return false
   end
 
@@ -371,7 +371,7 @@ end
 
 local function prompt_install(info)
   UIManager:show(ConfirmBox:new {
-    text = _("发现 AskGPT 新版本 ") .. tostring(info.tag_name or info.latest) .. "\n\n" ..
+    text = _("发现 Caudex 新版本 ") .. tostring(info.tag_name or info.latest) .. "\n\n" ..
            _("当前版本：v") .. tostring(info.current):gsub("^v", "") .. "\n\n" ..
            _("是否下载并安装？") .. "\n\n" ..
            _("configuration.lua 会被保留。"),
@@ -380,7 +380,7 @@ local function prompt_install(info)
     ok_callback = function()
       -- Match KOReader's OTA flow: show feedback first, then do blocking
       -- download/install work on the next UI tick so the dialog can repaint.
-      show_message(_("AskGPT 正在下载 ") .. tostring(info.tag_name or info.latest) .. "...", 3)
+      show_message(_("Caudex 正在下载 ") .. tostring(info.tag_name or info.latest) .. "...", 3)
       UIManager:scheduleIn(1, function()
         install_update(info, true)
       end)
@@ -394,7 +394,7 @@ function UpdateChecker.checkForUpdates(opts)
   opts = opts or {}
   local info, err = get_update_info()
   if not info then
-    if opts.interactive then show_message(_("AskGPT 检查更新失败：\n") .. tostring(err), 6) end
+    if opts.interactive then show_message(_("Caudex 检查更新失败：\n") .. tostring(err), 6) end
     return false, err
   end
 
@@ -403,8 +403,8 @@ function UpdateChecker.checkForUpdates(opts)
       prompt_install(info)
     else
       show_message(
-        _("发现 AskGPT 新版本 ") .. tostring(info.tag_name or info.latest) ..
-        _("，可在 AskGPT 更新菜单中安装。"),
+        _("发现 Caudex 新版本 ") .. tostring(info.tag_name or info.latest) ..
+        _("，可在 Caudex 更新菜单中安装。"),
         6
       )
     end
@@ -412,7 +412,7 @@ function UpdateChecker.checkForUpdates(opts)
   end
 
   if opts.interactive then
-    show_message(_("AskGPT 已是最新版本。当前版本：v") .. tostring(info.current):gsub("^v", ""), 5)
+    show_message(_("Caudex 已是最新版本。当前版本：v") .. tostring(info.current):gsub("^v", ""), 5)
   end
   return false, info
 end

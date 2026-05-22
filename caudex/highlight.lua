@@ -1,5 +1,5 @@
 -- 从 KOReader 高亮数据结构中提取 highlighted_text / context_text
-local Util = require("askgpt.util")
+local Util = require("caudex.util")
 
 local Highlight = {}
 

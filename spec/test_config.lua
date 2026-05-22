@@ -1,15 +1,15 @@
 local H = require("spec.helpers")
 
-H.section("B. askgpt/config.lua")
+H.section("B. caudex/config.lua")
 
 -- Helper: load a fresh Config with a given mock configuration value.
 -- config_mock can be any value (table, string, nil …).
 local function with_config(config_mock, fn)
-  H.reset("askgpt.config", "configuration")
+  H.reset("caudex.config", "configuration")
   package.loaded["configuration"] = config_mock
-  local Config = require("askgpt.config")
+  local Config = require("caudex.config")
   fn(Config)
-  H.reset("askgpt.config", "configuration")
+  H.reset("caudex.config", "configuration")
 end
 
 -- Non-table return from configuration.lua
@@ -23,13 +23,13 @@ end)
 -- LuaJIT does NOT treat package.loaded[x]=false as "cached absent" — it still
 -- searches the disk.  Use package.preload to inject a failing loader instead.
 do
-  H.reset("askgpt.config", "configuration")
+  H.reset("caudex.config", "configuration")
   package.preload["configuration"] = function() error("configuration not found") end
-  local Config2 = require("askgpt.config")
+  local Config2 = require("caudex.config")
   local ok, msg = Config2.validate()
   H.is_false("nil config: validate() returns false", ok)
   package.preload["configuration"] = nil
-  H.reset("askgpt.config", "configuration")
+  H.reset("caudex.config", "configuration")
 end
 
 -- Both URLs empty

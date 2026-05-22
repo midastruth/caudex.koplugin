@@ -1,2 +1,2 @@
 -- 兼容壳：保持原有调用点不变
-return require("askgpt.dialog_controller").show
+return require("caudex.dialog_controller").show

@@ -1,5 +1,5 @@
--- AskGPT 插件配置样板
--- 位置：askgpt.koplugin/configuration.lua
+-- Caudex 插件配置样板
+-- 位置：caudex.koplugin/configuration.lua
 --
 -- 使用前请先修改 reader_ai_base_url。
 -- 注意：这里配置的是你的 Reader AI / Book-Aware 后端服务地址，
@@ -14,7 +14,7 @@ return {
   -- reader_ai_base_url = "https://your-domain.example.com",
   --
   -- 请把下面的空字符串改成你自己的服务地址。
-  -- 如果保持为空，点击 Ask GPT 时仍会提示“配置错误”。
+  -- 如果保持为空，点击 Caudex 时仍会提示“配置错误”。
   reader_ai_base_url = "https://read.opensociety.eu.org",
 
   ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ return {
   ---------------------------------------------------------------------------
   -- 可选：从 Book-Aware 后端同步 EPUB 到 KOReader 本地目录
   ---------------------------------------------------------------------------
-  -- 菜单路径：Tools/工具 → AskGPT → Book-Aware book sync
+  -- 菜单路径：Tools/工具 → Caudex → Book-Aware book sync
   -- 打开后会显示书籍同步界面，可选择单本或同步全部。
   -- 不填 reader_ai_sync_dir 时，默认同步到当前书籍所在目录或 KOReader 最近目录。
   -- reader_ai_sync_dir = "/mnt/onboard/Books",

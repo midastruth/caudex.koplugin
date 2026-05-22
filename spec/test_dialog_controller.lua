@@ -5,8 +5,8 @@
 local H = require("spec.helpers")
 H.section("dialog_controller")
 
-H.reset("askgpt.dialog_controller", "askgpt.workflow", "askgpt.highlight",
-        "askgpt.config", "askgpt.util",
+H.reset("caudex.dialog_controller", "caudex.workflow", "caudex.highlight",
+        "caudex.config", "caudex.util",
         "ui/widget/inputdialog", "ui/uimanager", "gettext")
 
 local spy = H.mock_koreader()
@@ -27,23 +27,23 @@ package.loaded["ui/widget/inputdialog"] = {
 }
 
 -- ── Stub 业务依赖 ───────────────────────────────────────────────────────────
-package.loaded["askgpt.highlight"] = {
+package.loaded["caudex.highlight"] = {
   extract = function(_) return "selected text", "ctx" end,
 }
 
-package.loaded["askgpt.config"] = {
+package.loaded["caudex.config"] = {
   -- 不返回翻译目标 → 不应该出现 Dictionary 按钮
   get_translate_target = function() return nil end,
 }
 
-package.loaded["askgpt.util"] = {
+package.loaded["caudex.util"] = {
   trim = function(s) return (s or ""):gsub("^%s+",""):gsub("%s+$","") end,
 }
 
 local ask_calls       = {}
 local summarize_calls = {}
 local analyze_calls   = {}
-package.loaded["askgpt.workflow"] = {
+package.loaded["caudex.workflow"] = {
   ask       = function(ui, opts, def) table.insert(ask_calls,       { ui = ui, opts = opts, def = def }) end,
   summarize = function(ui, opts, def) table.insert(summarize_calls, { ui = ui, opts = opts, def = def }) end,
   analyze   = function(ui, opts, def) table.insert(analyze_calls,   { ui = ui, opts = opts, def = def }) end,
@@ -60,7 +60,7 @@ local ui = {
 }
 
 -- ── Act ────────────────────────────────────────────────────────────────────
-local DialogController = require("askgpt.dialog_controller")
+local DialogController = require("caudex.dialog_controller")
 DialogController.show(ui, { _fake = true })
 
 -- ── Assert: 对话框已弹出，并捕获到了按钮组 ──────────────────────────────────
@@ -121,8 +121,8 @@ package.loaded["ui/widget/inputdialog"] = {
   end,
 }
 
-H.reset("askgpt.dialog_controller")
-DialogController = require("askgpt.dialog_controller")
+H.reset("caudex.dialog_controller")
+DialogController = require("caudex.dialog_controller")
 DialogController.show(ui, { _fake = true })
 find_button = function(text)
   for _, b in ipairs(captured_dialog.buttons[1]) do

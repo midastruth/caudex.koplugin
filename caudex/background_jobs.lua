@@ -8,10 +8,10 @@ local ConfirmBox  = require("ui/widget/confirmbox")
 local ButtonDialog = require("ui/widget/buttondialog")
 local _ = require("gettext")
 
-local AiClient  = require("askgpt.ai_client")
-local Formatter = require("askgpt.formatter")
-local Util      = require("askgpt.util")
-local Errors    = require("askgpt.errors")
+local AiClient  = require("caudex.ai_client")
+local Formatter = require("caudex.formatter")
+local Util      = require("caudex.util")
+local Errors    = require("caudex.errors")
 
 local BackgroundJobs = {}
 
@@ -101,7 +101,7 @@ end
 -- 打开后台结果 viewer（无活跃 highlight 上下文）
 local function open_result_viewer(ui, job)
   if not job or not job.result_text then return end
-  local ChatGPTViewer = require("chatgptviewer")
+  local CaudexViewer = require("caudexviewer")
 
   local function on_add_note_disabled(_viewer)
     UIManager:show(InfoMessage:new {
@@ -116,7 +116,7 @@ local function open_result_viewer(ui, job)
     })
   end
 
-  UIManager:show(ChatGPTViewer:new {
+  UIManager:show(CaudexViewer:new {
     ui              = ui,
     title           = job.viewer_title or _("AI Result"),
     text            = job.result_text,
@@ -131,7 +131,7 @@ local function notify_done(ui, job)
   local label = job.kind == "summarize" and _("AI摘要") or _("AI分析")
   if job.status == "done" then
     local text = label .. _("已完成，是否立即查看？")
-    local ok, TopNotification = pcall(require, "askgpt.top_notification")
+    local ok, TopNotification = pcall(require, "caudex.top_notification")
     local shown = false
     if ok and TopNotification then
       shown = pcall(function()
@@ -402,7 +402,7 @@ function BackgroundJobs.show_results_menu(ui)
         end)
         if not ok then
           UIManager:show(InfoMessage:new {
-            text    = _("打开 AskGPT 结果失败：") .. tostring(err),
+            text    = _("打开 Caudex 结果失败：") .. tostring(err),
             timeout = 6,
           })
         end

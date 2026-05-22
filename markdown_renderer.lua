@@ -10,7 +10,7 @@ Markdown 渲染辅助模块
 设计目标：
   1. 单一职责 —— 只负责 md→html 转换 + 默认 CSS 提供
   2. 对 nil / 空字符串 / 转换失败健壮（永远返回 string，便于上层无脑使用）
-  3. 不依赖 ChatGPTViewer，便于离线单元测试
+  3. 不依赖 CaudexViewer，便于离线单元测试
 ]]
 
 local MarkdownRenderer = {}

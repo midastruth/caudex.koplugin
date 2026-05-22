@@ -1,13 +1,13 @@
 --[[--
-ChatGPT查看器 - 在可滚动视图中显示文本的组件
-用于显示ChatGPT响应内容，支持文本选择、滚动、提问和添加笔记功能
+Caudex查看器 - 在可滚动视图中显示文本的组件
+用于显示Caudex响应内容，支持文本选择、滚动、提问和添加笔记功能
 
 @usage 使用示例
-    local chatgptviewer = ChatGPTViewer:new{
+    local caudexviewer = CaudexViewer:new{
         title = _("I can scroll!"),
         text = _("I'll need to be longer than this example to scroll."),
     }
-    UIManager:show(chatgptviewer)
+    UIManager:show(caudexviewer)
 ]]
 -- 导入必要的KOReader UI组件和工具模块
 local BD = require("ui/bidi")                    -- 双向文本支持
@@ -37,13 +37,13 @@ local Screen = Device.screen               -- 屏幕对象
 local MarkdownRenderer  -- lazy-required when render_markdown=true
 
 --[[--
-ChatGPT查看器主组件类
-继承自InputContainer，提供完整的ChatGPT响应显示和交互功能
+Caudex查看器主组件类
+继承自InputContainer，提供完整的Caudex响应显示和交互功能
 ]]
-local ChatGPTViewer = InputContainer:extend {
+local CaudexViewer = InputContainer:extend {
   ui = nil,                    -- UI实例引用，用于访问主程序功能
   title = nil,                 -- 对话框标题
-  text = nil,                  -- 要显示的ChatGPT响应文本
+  text = nil,                  -- 要显示的Caudex响应文本
   width = nil,                 -- 对话框宽度（可选，默认自适应屏幕）
   height = nil,                -- 对话框高度（可选，默认自适应屏幕）
   buttons_table = nil,         -- 自定义按钮配置表
@@ -93,7 +93,7 @@ local ChatGPTViewer = InputContainer:extend {
 @param render_markdown 是否启用 Markdown 渲染
 @param markdown_max_size 超过此长度时强制走纯文本路径
 ]]
-function ChatGPTViewer._shouldUseHtml(text, render_markdown, markdown_max_size)
+function CaudexViewer._shouldUseHtml(text, render_markdown, markdown_max_size)
     if not render_markdown then return false end
     if type(text) ~= "string" or text == "" then return false end
     if #text > (markdown_max_size or 131072) then return false end
@@ -101,10 +101,10 @@ function ChatGPTViewer._shouldUseHtml(text, render_markdown, markdown_max_size)
 end
 
 --[[--
-初始化函数 - 构建完整的ChatGPT查看器UI界面
+初始化函数 - 构建完整的Caudex查看器UI界面
 创建所有必要的UI组件并设置事件处理
 ]]
-function ChatGPTViewer:init()
+function CaudexViewer:init()
   -- 计算窗口尺寸 - 默认居中显示，留出边距
   self.align = "center"
   self.region = Geom:new {
@@ -302,7 +302,7 @@ function ChatGPTViewer:init()
     scroll_callback = self._buttons_scroll_callback,  -- 绑定滚动回调
   }
   -- Markdown 渲染路径：文本未超长时用 ScrollHtmlWidget 替换 ScrollTextWidget
-  if ChatGPTViewer._shouldUseHtml(self.text, self.render_markdown, self.markdown_max_size) then
+  if CaudexViewer._shouldUseHtml(self.text, self.render_markdown, self.markdown_max_size) then
       if not MarkdownRenderer then MarkdownRenderer = require("markdown_renderer") end
       local ScrollHtmlWidget = require("ui/widget/scrollhtmlwidget")
       local html_body = MarkdownRenderer.toHtml(self.text)
@@ -384,7 +384,7 @@ end
 --[[--
 添加笔记功能 - 调用外部回调函数处理笔记添加
 ]]
-function ChatGPTViewer:addToNote()
+function CaudexViewer:addToNote()
   if self.onAddToNote then
     self:onAddToNote()
   end
@@ -394,13 +394,13 @@ end
 提问功能 - 显示输入对话框让用户输入新问题
 创建输入对话框，获取用户输入并触发提问回调
 ]]
-function ChatGPTViewer:askAnotherQuestion()
+function CaudexViewer:askAnotherQuestion()
   local input_dialog
   input_dialog = InputDialog:new {
     title = _("Ask another question"),           -- 对话框标题
     input = "",                                  -- 初始输入为空
     input_type = "text",                         -- 输入类型为文本
-    description = _("Enter your question for ChatGPT."),  -- 输入提示
+    description = _("Enter your question for Caudex."),  -- 输入提示
     buttons = {
       {
         {
@@ -430,7 +430,7 @@ end
 --[[--
 组件关闭时的处理 - 清理UI状态
 ]]
-function ChatGPTViewer:onCloseWidget()
+function CaudexViewer:onCloseWidget()
   self._closed = true
   self._update_pending = false
   UIManager:setDirty(nil, function()
@@ -441,7 +441,7 @@ end
 --[[--
 组件显示时的处理 - 刷新UI显示
 ]]
-function ChatGPTViewer:onShow()
+function CaudexViewer:onShow()
   UIManager:setDirty(self, function()
     return "partial", self.frame.dimen
   end)
@@ -453,7 +453,7 @@ end
 @param arg 事件参数（未使用）
 @param ges_ev 手势事件对象
 ]]
-function ChatGPTViewer:onTapClose(_, ges_ev)
+function CaudexViewer:onTapClose(_, ges_ev)
   if ges_ev.pos:notIntersectWith(self.frame.dimen) then
     self:onClose()  -- 点击外部区域，关闭对话框
   end
@@ -465,7 +465,7 @@ end
 @param arg 事件参数（未使用）
 @param ges_ev 手势事件对象（未使用）
 ]]
-function ChatGPTViewer:onMultiSwipe(_, _)
+function CaudexViewer:onMultiSwipe(_, _)
   -- 与其他全屏组件保持一致：多指滑动关闭
   self:onClose()
   return true
@@ -474,7 +474,7 @@ end
 --[[--
 关闭对话框 - 清理资源并触发回调
 ]]
-function ChatGPTViewer:onClose()
+function CaudexViewer:onClose()
   self._closed = true
   self._update_pending = false
   UIManager:close(self)
@@ -493,7 +493,7 @@ end
 @param arg 事件参数（未使用）
 @param ges 手势对象
 ]]
-function ChatGPTViewer:onSwipe(_, ges)
+function CaudexViewer:onSwipe(_, ges)
   if ges.pos:intersectWith(self.textw.dimen) then
     local direction = BD.flipDirectionIfMirroredUILayout(ges.direction)
     if direction == "west" then
@@ -518,7 +518,7 @@ end
 @param _ 事件参数（未使用）
 @param ges 手势对象
 ]]
-function ChatGPTViewer:onHoldStartText(_, ges)
+function CaudexViewer:onHoldStartText(_, ges)
   -- 将TextBoxWidget未处理的长按事件转发给MovableContainer
   return self.movable:onMovableHold(_, ges)
 end
@@ -528,7 +528,7 @@ end
 @param _ 事件参数（未使用）
 @param ges 手势对象
 ]]
-function ChatGPTViewer:onHoldPanText(_, ges)
+function CaudexViewer:onHoldPanText(_, ges)
   -- 只有在之前转发了Touch事件时才转发HoldPan
   -- 避免在文本选择时意外移动窗口
   if self.movable._touch_pre_pan_was_inside then
@@ -541,7 +541,7 @@ end
 @param _ 事件参数（未使用）
 @param ges 手势对象
 ]]
-function ChatGPTViewer:onHoldReleaseText(_, ges)
+function CaudexViewer:onHoldReleaseText(_, ges)
   -- 将TextBoxWidget未处理的长按释放事件转发给MovableContainer
   return self.movable:onMovableHoldRelease(_, ges)
 end
@@ -552,7 +552,7 @@ end
 @param _ 事件参数（未使用）
 @param ges 手势对象
 ]]
-function ChatGPTViewer:onForwardingTouch(_, ges)
+function CaudexViewer:onForwardingTouch(_, ges)
   -- 只有在文本区域外才转发触摸事件给MovableContainer
   if not ges.pos:intersectWith(self.textw.dimen) then
     return self.movable:onMovableTouch(_, ges)
@@ -567,7 +567,7 @@ end
 @param _ 事件参数（未使用）
 @param ges 手势对象
 ]]
-function ChatGPTViewer:onForwardingPan(_, ges)
+function CaudexViewer:onForwardingPan(_, ges)
   -- 只有在之前转发了Touch事件或正在移动时才转发拖动事件
   if self.movable._touch_pre_pan_was_inside or self.movable._moving then
     return self.movable:onMovablePan(_, ges)
@@ -579,7 +579,7 @@ end
 @param _ 事件参数（未使用）
 @param ges 手势对象
 ]]
-function ChatGPTViewer:onForwardingPanRelease(_, ges)
+function CaudexViewer:onForwardingPanRelease(_, ges)
   -- onMovablePanRelease函数内部有足够的检查，可以直接转发
   return self.movable:onMovablePanRelease(_, ges)
 end
@@ -592,7 +592,7 @@ end
 @param end_idx 选择结束索引
 @param to_source_index_func 源索引转换函数
 ]]
-function ChatGPTViewer:handleTextSelection(text, hold_duration, start_idx, end_idx, to_source_index_func)
+function CaudexViewer:handleTextSelection(text, hold_duration, start_idx, end_idx, to_source_index_func)
   -- 如果有自定义文本选择回调，优先使用
   if self.text_selection_callback then
     self.text_selection_callback(text, hold_duration, start_idx, end_idx, to_source_index_func)
@@ -611,16 +611,16 @@ end
 
 --[[--
 更新显示内容 - 关闭当前对话框并显示新内容
-用于刷新ChatGPT响应内容；Markdown路径带 200ms debounce 防止频繁重排
+用于刷新Caudex响应内容；Markdown路径带 200ms debounce 防止频繁重排
 @param new_text 新的文本内容
 ]]
-function ChatGPTViewer:update(new_text)
+function CaudexViewer:update(new_text)
   if self._closed then return end
   -- 纯文本路径：行为与改动前完全一致
   if not self.render_markdown then
     UIManager:close(self)  -- 关闭当前对话框
     -- 创建新的查看器实例
-    local updated_viewer = ChatGPTViewer:new {
+    local updated_viewer = CaudexViewer:new {
       ui = self.ui,
       title = self.title,
       text = new_text,
@@ -647,7 +647,7 @@ function ChatGPTViewer:update(new_text)
     local text = self._last_update_text
     UIManager:close(self)  -- 关闭当前对话框
     -- 创建新的查看器实例（传递 Markdown 相关参数）
-    local updated_viewer = ChatGPTViewer:new {
+    local updated_viewer = CaudexViewer:new {
       ui = self.ui,
       title = self.title,
       text = text,
@@ -664,4 +664,4 @@ function ChatGPTViewer:update(new_text)
   end)
 end
 
-return ChatGPTViewer
+return CaudexViewer

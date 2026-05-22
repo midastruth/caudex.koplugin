@@ -2,14 +2,14 @@
 -- lookup 同步；summarize / analyze 路由到 background_jobs（子进程）
 local UIManager     = require("ui/uimanager")
 local InfoMessage   = require("ui/widget/infomessage")
-local ChatGPTViewer = require("chatgptviewer")
+local CaudexViewer = require("caudexviewer")
 local _ = require("gettext")
 
-local AiClient         = require("askgpt.ai_client")
-local Errors           = require("askgpt.errors")
-local Formatter        = require("askgpt.formatter")
-local Util             = require("askgpt.util")
-local BackgroundJobs   = require("askgpt.background_jobs")
+local AiClient         = require("caudex.ai_client")
+local Errors           = require("caudex.errors")
+local Formatter        = require("caudex.formatter")
+local Util             = require("caudex.util")
+local BackgroundJobs   = require("caudex.background_jobs")
 
 local unpack = unpack or table.unpack
 
@@ -166,7 +166,7 @@ local function run_viewer_workflow(spec)
     table.insert(blocks, block)
     current_text = table.concat(blocks, "\n\n")
 
-    local chatgpt_viewer
+    local caudex_viewer
 
     local function handleAddToNote(viewer)
       if not spec.ui.highlight or not spec.ui.highlight.addNote then
@@ -174,7 +174,7 @@ local function run_viewer_workflow(spec)
         return
       end
       spec.ui.highlight:addNote(current_text)
-      UIManager:close(viewer or chatgpt_viewer)
+      UIManager:close(viewer or caudex_viewer)
       if spec.ui.highlight.onClose then spec.ui.highlight:onClose() end
     end
 
@@ -188,7 +188,7 @@ local function run_viewer_workflow(spec)
       viewer:update(current_text)
     end
 
-    chatgpt_viewer = ChatGPTViewer:new {
+    caudex_viewer = CaudexViewer:new {
       ui              = spec.ui,
       title           = spec.viewer_title,
       text            = current_text,
@@ -196,7 +196,7 @@ local function run_viewer_workflow(spec)
       onAskQuestion   = handleFollowUp,
       onAddToNote     = handleAddToNote,
     }
-    UIManager:show(chatgpt_viewer)
+    UIManager:show(caudex_viewer)
   end)
 end
 
@@ -322,10 +322,10 @@ end
 -- ── Ask → SSE 流式（子进程 + tmpfile 轮询）────────────────────────────────────
 --
 -- 流程：
---   1. 立即打开 ChatGPTViewer（显示"正在思考..."）
+--   1. 立即打开 CaudexViewer（显示"正在思考..."）
 --   2. fork 子进程调用 AiClient.streamAsk，把 delta 写入 tmpfile
 --   3. 主进程每 1.5s 读 tmpfile，更新 viewer
---   4. 收到 <<ASKGPT_DONE>> → 格式化最终结果，刷新 viewer，支持继续提问
+--   4. 收到 <<CAUDEX_DONE>> → 格式化最终结果，刷新 viewer，支持继续提问
 --   5. 用户关闭 viewer → 停止轮询，删除 tmpfile
 --
 function Workflow.ask(ui, options, default_highlighted)
@@ -344,11 +344,11 @@ function Workflow.ask(ui, options, default_highlighted)
   end
 
   math.randomseed(os.time())
-  local tmpfile = string.format("/tmp/askgpt_ask_%d_%d.txt", os.time(), math.random(99999))
+  local tmpfile = string.format("/tmp/caudex_ask_%d_%d.txt", os.time(), math.random(99999))
 
   local POLL_INTERVAL = 1.5
-  local DONE_MARKER   = "<<ASKGPT_DONE>>"
-  local ERROR_MARKER  = "<<ASKGPT_ERROR>>"
+  local DONE_MARKER   = "<<CAUDEX_DONE>>"
+  local ERROR_MARKER  = "<<CAUDEX_ERROR>>"
 
   local current_viewer  = nil
   local polling_active  = false
@@ -369,9 +369,9 @@ function Workflow.ask(ui, options, default_highlighted)
 
   local function show_viewer(display_text, callbacks)
     if current_viewer then UIManager:close(current_viewer) end
-    current_viewer = ChatGPTViewer:new {
+    current_viewer = CaudexViewer:new {
       ui              = ui,
-      title           = options.viewer_title or _("Ask GPT"),
+      title           = options.viewer_title or _("Caudex"),
       text            = display_text,
       render_markdown = true,
       close_callback  = callbacks and callbacks.on_close or nil,
@@ -418,7 +418,7 @@ function Workflow.ask(ui, options, default_highlighted)
       stop_and_cleanup()
       stream_complete = true
       UIManager:close(current_viewer)
-      Errors.show_request_error(raw:sub(error_pos + #ERROR_MARKER), _("Ask GPT"))
+      Errors.show_request_error(raw:sub(error_pos + #ERROR_MARKER), _("Caudex"))
       return
     end
 
@@ -455,7 +455,7 @@ function Workflow.ask(ui, options, default_highlighted)
             term             = text,
             highlighted_text = options.highlighted_text or default_highlighted,
             question         = trimmed,
-            viewer_title     = options.viewer_title or _("Ask GPT"),
+            viewer_title     = options.viewer_title or _("Caudex"),
           }, default_highlighted)
         end,
         on_note = function(_)
@@ -485,7 +485,7 @@ function Workflow.ask(ui, options, default_highlighted)
         })
       else
         UIManager:close(current_viewer)
-        Errors.show(_("Ask GPT 流式请求异常结束。"))
+        Errors.show(_("Caudex 流式请求异常结束。"))
       end
       return
     end

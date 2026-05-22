@@ -10,9 +10,9 @@ local SHA = string.rep("a", 64)
 -- ── mock infrastructure ────────────────────────────────────────────────────
 
 local function reset_modules()
-  H.reset("askgpt.annotation_sync", "askgpt.ai_client", "askgpt.util",
+  H.reset("caudex.annotation_sync", "caudex.ai_client", "caudex.util",
           "ui/event", "logger")
-  package.loaded["askgpt.util"] = {
+  package.loaded["caudex.util"] = {
     sha256_file = function() error("not used in tests") end,
     -- Deterministic substitute: real implementation hashes via ffi/sha2 which
     -- is not loadable in the unit-test harness. Returns a stable hex-ish
@@ -54,7 +54,7 @@ local function make_ai_client(pending_hls)
       return {}
     end,
   }
-  package.loaded["askgpt.ai_client"] = ai
+  package.loaded["caudex.ai_client"] = ai
   return ai, update_calls
 end
 
@@ -145,7 +145,7 @@ do
     return {}
   end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.sync(ui)
 
   H.eq("T1 resolved=1",          r.resolved, 1)
@@ -197,7 +197,7 @@ do
     return {}
   end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.sync(ui)
 
   H.eq("T2 resolved=1",                     r.resolved, 1)
@@ -243,7 +243,7 @@ do
     return {}
   end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.sync(ui)
 
   H.eq("T3 conflict=1",         r.conflict, 1)
@@ -271,7 +271,7 @@ do
 
   local ui = make_ui(function() return {} end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.sync(ui)
 
   H.eq("T4 failed=1",           r.failed, 1)
@@ -319,7 +319,7 @@ do
   -- Margin = 40 - 0 = 40.
   -- Normal text: 40 >= MIN_MARGIN(15) → would resolve.
   -- Short text:  40 <  SHORT_MARGIN(45) → must conflict.
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.sync(ui)
 
   H.eq("T5 conflict=1 (short text conservatism)", r.conflict, 1)
@@ -342,7 +342,7 @@ do
     { id = "c-1", exact = "foo", koreader = { status = "conflict", error = "2 candidates" } },
     { id = "c-2", exact = "bar", koreader = { status = "conflict", error = "3 candidates" } },
   }
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights  = function(_sha, status)
       if status == "conflict" then return { highlights = conflict_hls } end
       return { highlights = {} }
@@ -352,7 +352,7 @@ do
 
   local ui = make_ui()  -- no findAllText needed; we're only calling list_conflicts
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local list = AS.list_conflicts(ui)
 
   H.eq("list_conflicts returns 2 items",    #list, 2)
@@ -400,7 +400,7 @@ local function make_ai_client_p3(pending_hls, all_with_deleted)
       return {}
     end,
   }
-  package.loaded["askgpt.ai_client"] = ai
+  package.loaded["caudex.ai_client"] = ai
   return ai, update_calls, create_calls, delete_calls
 end
 
@@ -429,7 +429,7 @@ do
     return {}
   end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   AS.sync(ui)
 
   local item = ui.annotation._calls[1]
@@ -458,7 +458,7 @@ do
     note                   = "",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.sync(ui)
 
   H.eq("T7 pushed=1",    r.pushed, 1)
@@ -489,7 +489,7 @@ do
     note                   = "",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.sync(ui)
 
   H.eq("T8 removed=1",                r.removed, 1)
@@ -511,7 +511,7 @@ do
   -- UI has no annotations; tombstone has no local counterpart.
   local ui = make_ui(function() return {} end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   H.no_error("T9 tombstone for missing annotation doesn't crash", function()
     AS.sync(ui)
   end)
@@ -523,7 +523,7 @@ end
 do
   reset_modules()
   local update_calls = {}
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights  = function() return { highlights = {} } end,
     updateHighlight = function(_sha, id, patch)
       table.insert(update_calls, { id = id, patch = patch })
@@ -541,7 +541,7 @@ do
     note                   = "",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.push_changes_only(ui)
 
   H.eq("T10 pushed=1",                    r.pushed, 1)
@@ -556,7 +556,7 @@ end
 do
   reset_modules()
   local update_calls = {}
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights  = function() return { highlights = {} } end,
     updateHighlight = function(_sha, id, patch)
       table.insert(update_calls, { id = id, patch = patch })
@@ -574,7 +574,7 @@ do
     note                   = "my note",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.push_changes_only(ui)
 
   H.eq("T11 pushed=0",                 r.pushed, 0)
@@ -585,7 +585,7 @@ end
 
 do
   reset_modules()
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function(_sha, _status, include_deleted)
       return { highlights = {} }
     end,
@@ -604,7 +604,7 @@ do
     note                   = "new note",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.sync(ui)
 
   H.eq("T12 pushed=0 after backend failure", r.pushed, 0)
@@ -617,7 +617,7 @@ end
 
 do
   reset_modules()
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function(_sha, _status, include_deleted)
       if include_deleted then error("tombstone fetch failed") end
       return { highlights = {} }
@@ -626,7 +626,7 @@ do
   }
 
   local ui = make_ui(function() return {} end)
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local ok, err = pcall(function() AS.sync(ui) end)
 
   H.is_false("T13 sync raises on tombstone fetch failure", ok)
@@ -645,7 +645,7 @@ do
       suffix = " after",
     },
   }
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function(_sha, _status, include_deleted)
       if include_deleted then return { highlights = {} } end
       return { highlights = pending }
@@ -667,7 +667,7 @@ do
     return {}
   end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r1 = AS.sync(ui)
   local r2 = AS.sync(ui)
 
@@ -703,7 +703,7 @@ do
     note    = "first note",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.sync(ui)
 
   H.eq("T15 created=1",          r.created, 1)
@@ -745,7 +745,7 @@ do
     color = "blue",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   AS.sync(ui)
   AS.sync(ui)
 
@@ -759,7 +759,7 @@ do
   reset_modules()
   -- Use a stub AI client that always fails the first POST, succeeds the second.
   local attempts = {}
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function(_s, _st, inc) return { highlights = {} } end,
     updateHighlight = function() return {} end,
     createHighlight = function(_sha, payload)
@@ -776,7 +776,7 @@ do
     pos1 = "/body/p[5].8",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r1 = AS.sync(ui)
   local r2 = AS.sync(ui)
 
@@ -800,7 +800,7 @@ do
     pos1 = "/body/p[1].12",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   -- sync() itself requires ui.rolling (Phase 1 guard), so we exercise via
   -- a direct sanity check: sync should refuse to run.
   local ok = pcall(AS.sync, ui)
@@ -821,7 +821,7 @@ do
     color = "green",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.sync(ui)
 
   H.eq("T19 created=0 when pos missing", r.created, 0)
@@ -834,7 +834,7 @@ end
 do
   reset_modules()
   local update_calls = {}
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function(_s, _st, inc)
       if inc then
         return { highlights = {
@@ -860,7 +860,7 @@ do
     note                   = "",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r  = AS.sync(ui)
 
   H.eq("T20 no PATCH sent for tombstoned id", #update_calls, 0)
@@ -886,7 +886,7 @@ do
     note                   = "kept from web",    -- NOT changed
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   AS.sync(ui)
 
   H.eq("T21 exactly one PATCH",          #updates, 1)
@@ -910,7 +910,7 @@ do
     note                   = "freshly added",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   AS.sync(ui)
 
   H.eq("T22 exactly one PATCH",            #updates, 1)
@@ -923,7 +923,7 @@ end
 do
   reset_modules()
   -- ai_client must NOT be reached for PDF; load a stub that explodes on call.
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights  = function() error("should not call listHighlights") end,
     updateHighlight = function() error("should not call updateHighlight") end,
     createHighlight = function() error("should not call createHighlight") end,
@@ -932,7 +932,7 @@ do
   local ui = make_ui(function() return {} end)
   ui.rolling = nil  -- non-EPUB
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r
   H.no_error("T23 push_changes_only on PDF does not raise", function()
     r = AS.push_changes_only(ui)
@@ -970,7 +970,7 @@ do
     pos1 = "/body/p[9].27",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   AS.sync(ui)
 
   H.eq("T24 getSelectedWordContext called with restore_selection=false",
@@ -986,7 +986,7 @@ end
 do
   reset_modules()
   -- Replace util.sha256_string with a broken implementation that returns nil.
-  local util = package.loaded["askgpt.util"]
+  local util = package.loaded["caudex.util"]
   util.sha256_string = function() return nil, "ffi/sha2.sha256 unavailable" end
 
   local _, _, creates = make_ai_client_p3({}, {})
@@ -997,7 +997,7 @@ do
     pos1 = "/body/p[10].17",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.sync(ui)
 
   -- The pcall inside push_new converts the raised error into a counted failure,
@@ -1017,7 +1017,7 @@ end
 
 do
   reset_modules()
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights  = function(_s, _st, _inc) return { highlights = {} } end,
     updateHighlight = function() return {} end,
     createHighlight = function(_sha, _payload)
@@ -1032,7 +1032,7 @@ do
     pos1 = "/body/p[11].58",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.sync(ui)
 
   H.eq("T26 created=0 on POST failure",     r.created, 0)
@@ -1055,7 +1055,7 @@ do
   local _, _, _, deletes = make_ai_client_p3({}, {})
   local ui = make_ui(function() return {} end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.delete_highlight_only(ui, {
     bookaware_highlight_id = "hl-del-027",
     bookaware_sha256       = SHA,
@@ -1075,7 +1075,7 @@ do
   local _, _, _, deletes = make_ai_client_p3({}, {})
   local ui = make_ui(function() return {} end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.delete_highlight_only(ui, {
     bookaware_highlight_id = "hl-other-book",
     bookaware_sha256       = string.rep("b", 64),
@@ -1091,7 +1091,7 @@ end
 do
   reset_modules()
   local delete_calls = 0
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function() return { highlights = {} } end,
     deleteHighlight = function()
       delete_calls = delete_calls + 1
@@ -1100,7 +1100,7 @@ do
   }
   local ui = make_ui(function() return {} end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.delete_highlight_only(ui, {
     bookaware_highlight_id = "hl-pending-029",
     bookaware_sha256       = SHA,
@@ -1121,7 +1121,7 @@ do
     settings = { bookaware_pending_deletes = { "hl-pending-030" } },
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.sync(ui)
 
   H.eq("T30 deleteHighlight called once", #deletes, 1)
@@ -1139,7 +1139,7 @@ do
   reset_modules()
   local list_calls = {}
   local update_calls = {}
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function(_sha, status, include_deleted)
       table.insert(list_calls, { status = status, include_deleted = include_deleted })
       return { highlights = {
@@ -1167,7 +1167,7 @@ do
 
   local ui = make_ui(function() error("repair should use resolved backend anchors") end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.repair_missing_highlights(ui)
 
   H.eq("T31 repaired=1", r.repaired, 1)
@@ -1192,7 +1192,7 @@ end
 
 do
   reset_modules()
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function()
       return { highlights = {
         {
@@ -1218,7 +1218,7 @@ do
     pos1                   = "/body/p[32].26",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.repair_missing_highlights(ui)
 
   H.eq("T32 repaired=0", r.repaired, 0)
@@ -1233,7 +1233,7 @@ end
 
 do
   reset_modules()
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function()
       return { highlights = {
         {
@@ -1250,7 +1250,7 @@ do
   -- anchors and must fail loudly when they are missing.
   local ui = make_ui(function() error("repair must not call findAllText") end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.repair_missing_highlights(ui)
 
   H.eq("T33 repaired=0", r.repaired, 0)
@@ -1267,7 +1267,7 @@ end
 
 do
   reset_modules()
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function()
       return { highlights = {
         {
@@ -1291,7 +1291,7 @@ do
     }
   end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.repair_missing_highlights(ui)
 
   H.eq("T34 repaired=0", r.repaired, 0)
@@ -1309,7 +1309,7 @@ end
 do
   reset_modules()
   local list_calls = {}
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function(_sha, status, include_deleted)
       table.insert(list_calls, { status = status, include_deleted = include_deleted })
       if include_deleted then
@@ -1340,7 +1340,7 @@ do
     return {}
   end)
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.sync(ui)
 
   H.eq("T35 repaired=1 during normal sync", r.repaired, 1)
@@ -1375,7 +1375,7 @@ do
     })
   end
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local ok, err = pcall(AS.sync, ui)
 
   H.is_false("T36 sync refuses large removal without force", ok)
@@ -1408,7 +1408,7 @@ do
     })
   end
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.sync(ui, { force = true })
 
   H.eq("T37 removed=6 with force", r.removed, 6)
@@ -1421,7 +1421,7 @@ end
 
 do
   reset_modules()
-  package.loaded["askgpt.ai_client"] = {
+  package.loaded["caudex.ai_client"] = {
     listHighlights = function(_sha, _status, include_deleted)
       if include_deleted then
         return { highlights = {
@@ -1451,7 +1451,7 @@ do
     note                   = "old note",
   })
 
-  local AS = require("askgpt.annotation_sync")
+  local AS = require("caudex.annotation_sync")
   local r = AS.sync(ui)
 
   H.eq("T38 pulled=1", r.pulled, 1)

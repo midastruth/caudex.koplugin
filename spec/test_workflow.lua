@@ -1,24 +1,24 @@
 local H = require("spec.helpers")
 
-H.section("F. askgpt/workflow.lua")
+H.section("F. caudex/workflow.lua")
 
 local spy = H.mock_koreader()
 
 -- ── Mock all workflow dependencies ────────────────────────────────────────
 
-H.reset("askgpt.workflow", "askgpt.background_jobs", "askgpt.ai_client",
-        "chatgptviewer", "askgpt.formatter", "askgpt.errors",
-        "askgpt.util", "askgpt.highlight")
+H.reset("caudex.workflow", "caudex.background_jobs", "caudex.ai_client",
+        "caudexviewer", "caudex.formatter", "caudex.errors",
+        "caudex.util", "caudex.highlight")
 
 local bj_calls = {}
-package.loaded["askgpt.background_jobs"] = {
+package.loaded["caudex.background_jobs"] = {
   submit_summary    = function(...) table.insert(bj_calls, { kind="summary", n = select("#",...) }) end,
   submit_analyze    = function(...) table.insert(bj_calls, { kind="analyze", n = select("#",...) }) end,
   show_results_menu = function() end,
 }
 
 local ai_calls = {}
-package.loaded["askgpt.ai_client"] = {
+package.loaded["caudex.ai_client"] = {
   dictionaryLookup = function(params)
     table.insert(ai_calls, params)
     return { term = params.term, definition = "mock definition" }
@@ -26,14 +26,14 @@ package.loaded["askgpt.ai_client"] = {
   MAX_RETRY_ATTEMPTS = 3,
 }
 
-package.loaded["chatgptviewer"] = {
+package.loaded["caudexviewer"] = {
   new = function(_, args)
-    return { _type = "ChatGPTViewer", update = function() end }
+    return { _type = "CaudexViewer", update = function() end }
   end,
 }
 
 local formatter_calls = {}
-package.loaded["askgpt.formatter"] = {
+package.loaded["caudex.formatter"] = {
   dictionary = function(args)
     table.insert(formatter_calls, args)
     return "dict:" .. (args.term or "?")
@@ -42,7 +42,7 @@ package.loaded["askgpt.formatter"] = {
   analysis   = function(args) return "ana" end,
 }
 
-package.loaded["askgpt.errors"] = {
+package.loaded["caudex.errors"] = {
   show              = function() end,
   show_request_error = function() end,
 }
@@ -52,7 +52,7 @@ spy.UIManager.scheduleIn = function(_, delay, fn)
   if fn then fn() end
 end
 
-local Workflow = require("askgpt.workflow")
+local Workflow = require("caudex.workflow")
 
 -- Shared fake UI
 local fake_ui = {
@@ -126,21 +126,21 @@ H.eq("lookup() passes file_sha256 to formatter", formatter_calls[1] and formatte
 -- Viewer should have been shown
 local viewer_shown = false
 for _, w in ipairs(spy.shown) do
-  if w._type == "ChatGPTViewer" then viewer_shown = true end
+  if w._type == "CaudexViewer" then viewer_shown = true end
 end
-H.is_true("lookup() shows ChatGPTViewer", viewer_shown)
+H.is_true("lookup() shows CaudexViewer", viewer_shown)
 
 -- ── ask() → SSE 流式 ──────────────────────────────────────────────────────
 
 -- Stub AiClient.streamAsk and ffi/util for ask() tests
 local stream_ask_calls = {}
-package.loaded["askgpt.ai_client"].streamAsk = function(params, tmpfile)
+package.loaded["caudex.ai_client"].streamAsk = function(params, tmpfile)
   table.insert(stream_ask_calls, { params = params, tmpfile = tmpfile })
 end
-package.loaded["askgpt.formatter"].ask = function(args)
+package.loaded["caudex.formatter"].ask = function(args)
   return "ask:" .. (args.question or "?")
 end
-package.loaded["askgpt.errors"].show = function(msg)
+package.loaded["caudex.errors"].show = function(msg)
   stream_ask_calls._last_error = msg
 end
 
@@ -163,8 +163,8 @@ package.loaded["json"] = {
 }
 
 -- Reset workflow to pick up new stubs
-H.reset("askgpt.workflow")
-local Workflow2 = require("askgpt.workflow")
+H.reset("caudex.workflow")
+local Workflow2 = require("caudex.workflow")
 
 -- ask() with empty text should show error and NOT fork
 fork_calls = {}
@@ -198,6 +198,6 @@ end)
 H.eq("ask() successful fork: forked once", #fork_calls, 1)
 local ask_viewer_shown = false
 for _, w in ipairs(spy.shown) do
-  if w._type == "ChatGPTViewer" then ask_viewer_shown = true end
+  if w._type == "CaudexViewer" then ask_viewer_shown = true end
 end
-H.is_true("ask() successful fork: ChatGPTViewer shown immediately", ask_viewer_shown)
+H.is_true("ask() successful fork: CaudexViewer shown immediately", ask_viewer_shown)

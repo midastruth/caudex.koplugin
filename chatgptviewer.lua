@@ -81,7 +81,7 @@ local ChatGPTViewer = InputContainer:extend {
 
   -- Markdown 渲染选项
   render_markdown = false,                     -- 是否渲染 Markdown（需要 ScrollHtmlWidget）
-  markdown_max_size = 8192,                    -- 超过此长度时强制走 ScrollTextWidget 路径
+  markdown_max_size = 131072,                  -- 超过此长度时强制走 ScrollTextWidget 路径（128 KB，约 4 万汉字）
   _update_pending = false,                     -- debounce: 是否有未执行的 update 调度
   _last_update_text = nil,                     -- debounce: 最后一次待应用的文本
   _closed = false,                             -- 已关闭后禁止延迟 update 重新打开
@@ -96,7 +96,7 @@ local ChatGPTViewer = InputContainer:extend {
 function ChatGPTViewer._shouldUseHtml(text, render_markdown, markdown_max_size)
     if not render_markdown then return false end
     if type(text) ~= "string" or text == "" then return false end
-    if #text > (markdown_max_size or 8192) then return false end
+    if #text > (markdown_max_size or 131072) then return false end
     return true
 end
 

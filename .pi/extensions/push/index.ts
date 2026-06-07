@@ -425,7 +425,7 @@ for name in tracked:
     path = pathlib.PurePosixPath(name)
     if not name.endswith('.lua'):
         continue
-    if len(path.parts) == 1 or path.parts[0] == 'askgpt':
+    if len(path.parts) == 1 or path.parts[0] == 'caudex':
         files.append(name)
 if not files:
     raise SystemExit('No plugin Lua files found for release asset')

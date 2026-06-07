@@ -319,16 +319,28 @@ function Workflow.analyze(ui, options, default_highlighted)
                                 doc_file_sha256, get_doc_location(ui))
 end
 
--- ── Ask → SSE 流式（子进程 + tmpfile 轮询）────────────────────────────────────
+-- ── 流式工作流核心（子进程 + tmpfile 轮询）────────────────────────────────────
 --
 -- 流程：
---   1. 立即打开 CaudexViewer（显示"正在思考..."）
---   2. fork 子进程调用 AiClient.streamAsk，把 delta 写入 tmpfile
+--   1. 立即打开 CaudexViewer（显示占位提示）
+--   2. fork 子进程调用 stream_fn(stream_params, tmpfile)，把 delta 写入 tmpfile
 --   3. 主进程每 1.5s 读 tmpfile，更新 viewer
 --   4. 收到 <<CAUDEX_DONE>> → 格式化最终结果，刷新 viewer，支持继续提问
 --   5. 用户关闭 viewer → 停止轮询，删除 tmpfile
 --
-function Workflow.ask(ui, options, default_highlighted)
+-- spec 字段：
+--   ui, options, default_highlighted
+--   stream_fn       function(stream_params, tmpfile)  在子进程运行
+--   tmp_prefix      string  /tmp 文件前缀
+--   placeholder     string  初始占位文本
+--   restart         function(ui, options, trimmed_input, default_highlighted)
+--                     继续提问时重新发起本工作流
+local function run_stream_workflow(spec)
+  local ui                  = spec.ui
+  local options             = spec.options or {}
+  local default_highlighted = spec.default_highlighted
+  local stream_fn           = spec.stream_fn
+
   local ffiutil = require("ffi/util")
   local json    = require("json")
 
@@ -344,7 +356,8 @@ function Workflow.ask(ui, options, default_highlighted)
   end
 
   math.randomseed(os.time())
-  local tmpfile = string.format("/tmp/caudex_ask_%d_%d.txt", os.time(), math.random(99999))
+  local tmpfile = string.format("%s_%d_%d.txt",
+    spec.tmp_prefix or "/tmp/caudex_stream", os.time(), math.random(99999))
 
   local POLL_INTERVAL = 1.5
   local DONE_MARKER   = "<<CAUDEX_DONE>>"
@@ -357,6 +370,7 @@ function Workflow.ask(ui, options, default_highlighted)
   local stream_params = {
     text        = text,
     question    = question,
+    action      = options.action,
     file_sha256 = doc_file_sha256,
     book        = build_book(doc_title, doc_author, doc_file_sha256),
     location    = doc_location,
@@ -386,12 +400,12 @@ function Workflow.ask(ui, options, default_highlighted)
   end
 
   -- 初始占位 viewer
-  show_viewer(_("正在思考..."), { on_close = stop_and_cleanup })
+  show_viewer(spec.placeholder or _("正在思考..."), { on_close = stop_and_cleanup })
   polling_active = true
 
   -- Fork 子进程
   local pid = ffiutil.runInSubProcess(function()
-    AiClient.streamAsk(stream_params, tmpfile)
+    stream_fn(stream_params, tmpfile)
   end, false)
 
   if not pid then
@@ -451,12 +465,7 @@ function Workflow.ask(ui, options, default_highlighted)
         on_ask = function(_, input)
           local trimmed = Util.trim(input or "")
           if trimmed == "" then return end
-          Workflow.ask(ui, {
-            term             = text,
-            highlighted_text = options.highlighted_text or default_highlighted,
-            question         = trimmed,
-            viewer_title     = options.viewer_title or _("Caudex"),
-          }, default_highlighted)
+          spec.restart(ui, options, trimmed, default_highlighted, text)
         end,
         on_note = function(_)
           if ui.highlight and ui.highlight.addNote then
@@ -494,6 +503,48 @@ function Workflow.ask(ui, options, default_highlighted)
   end
 
   UIManager:scheduleIn(POLL_INTERVAL, poll)
+end
+
+-- ── Ask → SSE 流式 ────────────────────────────────────────────────────────────
+function Workflow.ask(ui, options, default_highlighted)
+  run_stream_workflow {
+    ui                  = ui,
+    options             = options,
+    default_highlighted = default_highlighted,
+    stream_fn           = AiClient.streamAsk,
+    tmp_prefix          = "/tmp/caudex_ask",
+    placeholder         = _("正在思考..."),
+    restart = function(ui2, opts, trimmed, default_hl, text)
+      Workflow.ask(ui2, {
+        term             = text,
+        highlighted_text = opts.highlighted_text or default_hl,
+        question         = trimmed,
+        viewer_title     = opts.viewer_title or _("Caudex"),
+      }, default_hl)
+    end,
+  }
+end
+
+-- ── Deep Research（深度研究）→ /ai/research/stream 结构化推理流 ────────────────
+-- options: term/highlighted_text, question, action, viewer_title
+function Workflow.research(ui, options, default_highlighted)
+  run_stream_workflow {
+    ui                  = ui,
+    options             = options,
+    default_highlighted = default_highlighted,
+    stream_fn           = AiClient.streamResearch,
+    tmp_prefix          = "/tmp/caudex_research",
+    placeholder         = _("正在进行深度研究…"),
+    restart = function(ui2, opts, trimmed, default_hl, text)
+      Workflow.research(ui2, {
+        term             = text,
+        highlighted_text = opts.highlighted_text or default_hl,
+        question         = trimmed,
+        action           = opts.action,
+        viewer_title     = opts.viewer_title or _("深度研究"),
+      }, default_hl)
+    end,
+  }
 end
 
 return Workflow

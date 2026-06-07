@@ -132,10 +132,14 @@ H.is_true("lookup() shows CaudexViewer", viewer_shown)
 
 -- ── ask() → SSE 流式 ──────────────────────────────────────────────────────
 
--- Stub AiClient.streamAsk and ffi/util for ask() tests
+-- Stub AiClient.streamAsk / streamResearch and ffi/util for ask()/research() tests
 local stream_ask_calls = {}
 package.loaded["caudex.ai_client"].streamAsk = function(params, tmpfile)
   table.insert(stream_ask_calls, { params = params, tmpfile = tmpfile })
+end
+local stream_research_calls = {}
+package.loaded["caudex.ai_client"].streamResearch = function(params, tmpfile)
+  table.insert(stream_research_calls, { params = params, tmpfile = tmpfile })
 end
 package.loaded["caudex.formatter"].ask = function(args)
   return "ask:" .. (args.question or "?")
@@ -201,3 +205,34 @@ for _, w in ipairs(spy.shown) do
   if w._type == "CaudexViewer" then ask_viewer_shown = true end
 end
 H.is_true("ask() successful fork: CaudexViewer shown immediately", ask_viewer_shown)
+
+-- ── research() → /ai/research/stream 深度研究流 ───────────────────────────
+
+-- research() with empty text should show error and NOT fork
+fork_should_fail = false
+fork_calls = {}
+stream_ask_calls._last_error = nil
+H.no_error("research() with empty text does not crash", function()
+  Workflow2.research(fake_ui, { term = "", highlighted_text = "" }, "")
+end)
+H.eq("research() empty text: no fork", #fork_calls, 0)
+H.is_true("research() empty text: error shown",
+          stream_ask_calls._last_error ~= nil)
+
+-- research() successful fork: opens viewer immediately
+fork_should_fail = false
+fork_calls = {}
+spy.shown = {}
+H.no_error("research() successful fork runs without error", function()
+  Workflow2.research(fake_ui, {
+    term     = "hello",
+    question = "focus?",
+    action   = "analyze",
+  }, "hello")
+end)
+H.eq("research() successful fork: forked once", #fork_calls, 1)
+local research_viewer_shown = false
+for _, w in ipairs(spy.shown) do
+  if w._type == "CaudexViewer" then research_viewer_shown = true end
+end
+H.is_true("research() successful fork: CaudexViewer shown immediately", research_viewer_shown)

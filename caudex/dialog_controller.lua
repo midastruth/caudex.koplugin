@@ -52,15 +52,16 @@ function DialogController.show(ui, highlight_source)
   })
 
   table.insert(buttons, {
-    text = _("Analyze"),
+    text = _("Deep research"),
     callback = function()
       local focus_input = input_dialog and Util.trim(input_dialog:getInputText()) or ""
       UIManager:close(input_dialog)
-      Workflow.analyze(ui, {
-        content            = highlighted_text,
-        highlighted_text   = highlighted_text,
-        focus_points_input = focus_input,
-        viewer_title       = _("Reader AI Analysis"),
+      Workflow.research(ui, {
+        term             = highlighted_text,
+        highlighted_text = highlighted_text,
+        question         = focus_input,
+        action           = "analyze",
+        viewer_title     = _("深度研究"),
       }, highlighted_text)
     end,
   })

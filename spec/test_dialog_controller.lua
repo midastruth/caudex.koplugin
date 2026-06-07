@@ -42,11 +42,11 @@ package.loaded["caudex.util"] = {
 
 local ask_calls       = {}
 local summarize_calls = {}
-local analyze_calls   = {}
+local research_calls  = {}
 package.loaded["caudex.workflow"] = {
   ask       = function(ui, opts, def) table.insert(ask_calls,       { ui = ui, opts = opts, def = def }) end,
   summarize = function(ui, opts, def) table.insert(summarize_calls, { ui = ui, opts = opts, def = def }) end,
-  analyze   = function(ui, opts, def) table.insert(analyze_calls,   { ui = ui, opts = opts, def = def }) end,
+  research  = function(ui, opts, def) table.insert(research_calls,  { ui = ui, opts = opts, def = def }) end,
   lookup    = function() end,
 }
 
@@ -80,7 +80,7 @@ end
 H.is_true("含 Cancel 按钮",         find_button("Cancel")       ~= nil)
 H.is_true("含 Ask 按钮",            find_button("Ask")          ~= nil)
 H.is_true("含 Summarize 按钮",      find_button("Summarize")    ~= nil)
-H.is_true("含 Analyze 按钮",        find_button("Analyze")      ~= nil)
+H.is_true("含 Deep research 按钮", find_button("Deep research") ~= nil)
 H.is_true("含 How to read 按钮 (新)", find_button("How to read") ~= nil)
 H.is_false("无 Dictionary 按钮 (未配置 target 语言)",
            find_button("Dictionary") ~= nil)

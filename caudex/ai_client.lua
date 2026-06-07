@@ -16,8 +16,9 @@ local BOOK_DOWNLOAD_TIMEOUT    = 300  -- 秒：从后端同步 EPUB 可能较慢
 local MAX_RETRY_ATTEMPTS       = 3
 local RETRY_DELAY              = 2    -- 秒
 
-local DEFAULT_READ_PATH          = "/ai/query"
-local DEFAULT_ASK_STREAM_PATH    = "/ai/query/stream"
+local DEFAULT_READ_PATH            = "/ai/query"
+local DEFAULT_ASK_STREAM_PATH      = "/ai/query/stream"
+local DEFAULT_RESEARCH_STREAM_PATH = "/ai/research/stream"
 local DEFAULT_IMPORT_EPUB_PATH   = "/books/import/epub"
 local DEFAULT_BOOKS_PATH         = "/books"
 local DEFAULT_BOOK_DOWNLOAD_PATH = "/epub"
@@ -179,6 +180,13 @@ end
 local function resolve_ask_stream_endpoint()
   local path = normalize_path(
     pick_config_path("reader_ai_ask_stream_path") or DEFAULT_ASK_STREAM_PATH
+  )
+  return resolve_service_base_url() .. path
+end
+
+local function resolve_research_stream_endpoint()
+  local path = normalize_path(
+    pick_config_path("reader_ai_research_stream_path") or DEFAULT_RESEARCH_STREAM_PATH
   )
   return resolve_service_base_url() .. path
 end
@@ -972,16 +980,17 @@ end
 --   增量中：直接写累积文字
 --   完成时：累积文字 .. "<<CAUDEX_DONE>>" .. json(final)
 --   出错时："<<CAUDEX_ERROR>>" .. message
-function AiClient.streamAsk(params, tmpfile)
+-- 通用 SSE 流式请求；被 streamAsk / streamResearch 复用。
+-- endpoint：SSE 服务地址；action："ask" | "summarize" | "analyze"。
+local function stream_request(endpoint, action, params, tmpfile)
   if type(params) ~= "table" then
-    error("streamAsk expects a parameter table.")
+    error("stream_request expects a parameter table.")
   end
 
-  local endpoint = resolve_ask_stream_endpoint()
-  local lib      = choose_lib(endpoint)
+  local lib = choose_lib(endpoint)
 
   local payload = {
-    action = "ask",
+    action = action or "ask",
     text   = Util.trim(params.text or params.term or ""),
   }
   add_read_metadata(payload, params)
@@ -1016,7 +1025,8 @@ function AiClient.streamAsk(params, tmpfile)
         session_id = ev.session_id,
       })
       write_tmp(accumulated .. "<<CAUDEX_DONE>>" .. final_blob)
-    elseif ev.code ~= nil then
+    elseif ev.code ~= nil and ev.message ~= nil then
+      -- error event: { code, message, ... }
       finished = true
       write_tmp("<<CAUDEX_ERROR>>" .. tostring(ev.message or ev.code))
     end
@@ -1069,6 +1079,23 @@ function AiClient.streamAsk(params, tmpfile)
       write_tmp("<<CAUDEX_ERROR>>Stream ended without final event")
     end
   end
+end
+
+function AiClient.streamAsk(params, tmpfile)
+  return stream_request(resolve_ask_stream_endpoint(), "ask", params, tmpfile)
+end
+
+-- 深度研究：路由到后端的 /ai/research/stream，使用结构化推理流水线。
+-- action 默认 "analyze"（whole_book scope）；可由 params.action 覆盖。
+function AiClient.streamResearch(params, tmpfile)
+  if type(params) ~= "table" then
+    error("streamResearch expects a parameter table.")
+  end
+  return stream_request(
+    resolve_research_stream_endpoint(),
+    params.action or "analyze",
+    params, tmpfile
+  )
 end
 
 return AiClient

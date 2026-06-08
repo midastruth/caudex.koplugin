@@ -1098,4 +1098,51 @@ function AiClient.streamResearch(params, tmpfile)
   )
 end
 
+-- 深度研究（阻塞版）：在子进程中同步消费 /ai/research/stream 的 SSE 流，
+-- 直到收到最终事件，返回 { answer, sources, session_id }。出错时 error()。
+-- 供 background_jobs 在后台任务中调用，使深度研究像摘要/分析一样后台执行。
+function AiClient.researchContent(params)
+  if type(params) ~= "table" then
+    error("researchContent expects a parameter table.")
+  end
+
+  math.randomseed(os.time() + (tonumber(tostring({}):match("0x(%x+)") or "0", 16) or 0))
+  local tmpfile = string.format("/tmp/caudex_research_sync_%d_%d.txt",
+    os.time(), math.random(99999))
+
+  local ok, err = pcall(stream_request,
+    resolve_research_stream_endpoint(),
+    params.action or "analyze",
+    params, tmpfile)
+
+  local raw = ""
+  local f = io.open(tmpfile, "r")
+  if f then raw = f:read("*a") or "" f:close() end
+  pcall(os.remove, tmpfile)
+
+  if not ok then
+    error("Reader AI research request failed: " .. tostring(err))
+  end
+
+  local DONE  = "<<CAUDEX_DONE>>"
+  local ERROR = "<<CAUDEX_ERROR>>"
+
+  local error_pos = raw:find(ERROR, 1, true)
+  if error_pos then
+    error("Reader AI research: " .. raw:sub(error_pos + #ERROR))
+  end
+
+  local done_pos = raw:find(DONE, 1, true)
+  if not done_pos then
+    error("Reader AI research returned no final result.")
+  end
+
+  local blob = raw:sub(done_pos + #DONE)
+  local ok_json, final = pcall(json.decode, blob)
+  if not ok_json or type(final) ~= "table" then
+    error("Reader AI research: failed to parse final result.")
+  end
+  return final
+end
+
 return AiClient

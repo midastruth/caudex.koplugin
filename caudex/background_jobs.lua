@@ -24,7 +24,25 @@ local POLL_START   = 1.0   -- 首次轮询间隔（秒）
 local POLL_MAX     = 6.0   -- 最大轮询间隔（秒）
 local POLL_GROWTH  = 1.5   -- 每轮乘以该系数
 
+-- 前向声明：深度研究的子任务构造器与追问轮询，open_result_viewer 会用到它们，
+-- 但其定义位于文件后部，因此先声明本地名以便闭包通过 upvalue 捕获。
+local make_research_task
+local start_research_followup_poll
+
 -- ── 内部工具 ──────────────────────────────────────────────────────────────────
+
+-- 深拷贝（保留嵌套表，例如高亮的 pos0/pos1），用于在后台结果中保存选区快照。
+local function deep_copy(value, seen)
+  if type(value) ~= "table" then return value end
+  seen = seen or {}
+  if seen[value] then return seen[value] end
+  local copy = {}
+  seen[value] = copy
+  for k, v in pairs(value) do
+    copy[deep_copy(k, seen)] = deep_copy(v, seen)
+  end
+  return copy
+end
 
 local UTF8_CHAR_PATTERN = '[%z\1-\127\194-\253][\128-\191]*'
 
@@ -73,6 +91,8 @@ local function job_kind_label(job)
     return _("[摘要]")
   elseif type(job) == "table" and job.kind == "analyze" then
     return _("[分析]")
+  elseif type(job) == "table" and job.kind == "research" then
+    return _("[研究]")
   end
   return _("[结果]")
 end
@@ -82,7 +102,7 @@ local function new_job(kind, viewer_title, highlighted_text, doc_title, doc_auth
   _next_id  = _next_id + 1
   local job = {
     id               = id,
-    kind             = kind,       -- "summarize" | "analyze"
+    kind             = kind,       -- "summarize" | "analyze" | "research"
     status           = "running",  -- "running" | "done" | "failed"
     created_at       = os.time(),
     viewer_title     = viewer_title,
@@ -93,14 +113,80 @@ local function new_job(kind, viewer_title, highlighted_text, doc_title, doc_auth
     result_text      = nil,
     error_message    = nil,
     pid              = nil,
+    -- 仅深度研究使用：保存追问/存笔记所需的上下文
+    research_blocks  = nil,  -- 已格式化的问答块数组（含初始结果与后续追问）
+    research_params  = nil,  -- 复用的请求参数（book/location/action…）
+    highlight_obj    = nil,  -- 提交时的 ui.highlight 引用
+    selection_snapshot = nil,  -- ui.highlight.selected_text 的深拷贝
   }
   _jobs[id] = job
   return job
 end
 
 -- 打开后台结果 viewer（无活跃 highlight 上下文）
+-- 深度研究结果 viewer：支持继续追问与添加到高亮笔记。
+-- 追问会再 fork 一次后台研究子进程；完成后把新块追加进同一 viewer。
+local function open_research_viewer(ui, job)
+  local CaudexViewer = require("caudexviewer")
+  local viewer
+
+  -- 保存笔记：优先写入提交时捕获的高亮选区快照，脱离当前选区也能落笔记。
+  local function handle_add_note(_viewer)
+    local hl = job.highlight_obj or (ui and ui.highlight)
+    if not hl or type(hl.addNote) ~= "function" then
+      UIManager:show(InfoMessage:new {
+        text    = _("无法找到高亮对象，已复制结果到查看器。"),
+        timeout = 3,
+      })
+      return
+    end
+    -- 若当前 highlight 没有活跃选区，则用提交时保存的快照恢复，
+    -- 让 addNote() 能基于原高亮位置创建带笔记的标注。
+    if (not hl.selected_text) and type(job.selection_snapshot) == "table" then
+      hl.selected_text = deep_copy(job.selection_snapshot)
+    end
+    local ok = pcall(function() hl:addNote(job.result_text) end)
+    if ok then
+      UIManager:close(viewer)
+      if type(hl.onClose) == "function" then pcall(function() hl:onClose() end) end
+    else
+      UIManager:show(InfoMessage:new {
+        text    = _("添加到笔记失败。"),
+        timeout = 3,
+      })
+    end
+  end
+
+  local function handle_follow_up(_viewer, input)
+    local trimmed = trim_text(input)
+    if trimmed == "" then return end
+    UIManager:show(InfoMessage:new {
+      text    = _("正在进行深度研究…完成后会自动更新。"),
+      timeout = 3,
+    })
+    start_research_followup_poll(ui, job, trimmed)
+  end
+
+  viewer = CaudexViewer:new {
+    ui              = ui,
+    title           = job.viewer_title or _("深度研究"),
+    text            = job.result_text,
+    render_markdown = true,
+    onAskQuestion   = handle_follow_up,
+    onAddToNote     = handle_add_note,
+  }
+  job.viewer = viewer
+  UIManager:show(viewer)
+end
+
+-- 打开后台结果 viewer。深度研究支持追问/存笔记；摘要/分析为只读结果。
 local function open_result_viewer(ui, job)
   if not job or not job.result_text then return end
+
+  if job.kind == "research" then
+    return open_research_viewer(ui, job)
+  end
+
   local CaudexViewer = require("caudexviewer")
 
   local function on_add_note_disabled(_viewer)
@@ -128,7 +214,9 @@ end
 
 -- 任务完成后通知用户
 local function notify_done(ui, job)
-  local label = job.kind == "summarize" and _("AI摘要") or _("AI分析")
+  local label = job.kind == "summarize" and _("AI摘要")
+             or job.kind == "research"  and _("深度研究")
+             or _("AI分析")
   if job.status == "done" then
     local text = label .. _("已完成，是否立即查看？")
     local ok, TopNotification = pcall(require, "caudex.top_notification")
@@ -291,6 +379,43 @@ local function make_analyze_task(content, focus_points, language,
   end
 end
 
+-- 深度研究任务体：在子进程中阻塞消费 /ai/research/stream，
+-- 完成后把 { answer, sources } 格式化为问答块写回父进程。
+-- text 为研究主题（高亮文本/书名），question 为可选的研究焦点/追问。
+make_research_task = function(text, question, action, highlighted_text,
+                             doc_title, doc_author, doc_file_sha256, doc_location)
+  return function(_pid, child_write_fd)
+    local result_text, err_msg
+    local ok, final = pcall(AiClient.researchContent, {
+      text        = text,
+      question    = question,
+      action      = action or "analyze",
+      file_sha256 = doc_file_sha256,
+      book        = build_book(doc_title, doc_author, doc_file_sha256),
+      location    = doc_location,
+    })
+    if not ok then
+      err_msg = tostring(final)
+    elseif type(final) ~= "table" then
+      err_msg = "invalid research response"
+    else
+      result_text = Formatter.ask {
+        highlighted_text = highlighted_text,
+        question         = question,
+        answer           = final.answer,
+        sources          = final.sources,
+        title            = doc_title,
+        author           = doc_author,
+        file_sha256      = doc_file_sha256,
+      }
+    end
+    local out = result_text
+      and json.encode({ status = "done",   text  = result_text })
+      or  json.encode({ status = "failed", error = err_msg or "unknown" })
+    ffiutil.writeToFD(child_write_fd, out, true)
+  end
+end
+
 -- ── 公开 API ──────────────────────────────────────────────────────────────────
 
 -- 提交摘要后台任务
@@ -362,6 +487,118 @@ function BackgroundJobs.submit_analyze(ui, options, default_highlighted, doc_tit
     timeout = 3,
   })
   start_poll(ui, job, pid, read_fd)
+end
+
+-- 提交深度研究后台任务（替代原前台流式）。
+-- 完成后通过顶部通知提示，点开的结果 viewer 支持继续追问与添加笔记。
+-- options: term/highlighted_text, question, action, viewer_title
+function BackgroundJobs.submit_research(ui, options, default_highlighted, doc_title, doc_author, doc_file_sha256, doc_location)
+  local text = Util.trim(
+    options.term or options.highlighted_text or default_highlighted or ""
+  )
+  if text == "" then
+    Errors.show(_("请先选中文字再提问。"))
+    return
+  end
+
+  local question     = Util.trim(options.question or "")
+  local action       = options.action or "analyze"
+  local viewer_title = options.viewer_title or _("深度研究")
+  local hitext       = options.highlighted_text or default_highlighted or text
+
+  local job = new_job("research", viewer_title, hitext, doc_title, doc_author, doc_file_sha256)
+  -- 保存追问/存笔记所需上下文
+  job.research_params = {
+    text         = text,
+    action       = action,
+    doc_title    = doc_title,
+    doc_author   = doc_author,
+    doc_file_sha256 = doc_file_sha256,
+    doc_location = doc_location,
+    highlighted_text = hitext,
+  }
+  job.research_blocks = {}
+  job.highlight_obj   = ui and ui.highlight or nil
+  if ui and ui.highlight and type(ui.highlight.selected_text) == "table" then
+    job.selection_snapshot = deep_copy(ui.highlight.selected_text)
+  end
+
+  local task = make_research_task(text, question, action, hitext,
+                                  doc_title, doc_author, doc_file_sha256, doc_location)
+
+  local pid, read_fd = ffiutil.runInSubProcess(task, true)
+  if not pid then
+    job.status        = "failed"
+    job.error_message = "fork failed"
+    Errors.show(_("无法启动后台深度研究任务（系统资源不足）。"))
+    return
+  end
+  job.pid = pid
+
+  UIManager:show(InfoMessage:new {
+    text    = _("深度研究任务已提交，可继续阅读。完成后会通知你。"),
+    timeout = 3,
+  })
+  start_poll(ui, job, pid, read_fd)
+end
+
+-- 追问轮询：在已打开的研究结果 viewer 中再发起一次后台研究，
+-- 完成后把新问答块追加到 job.result_text 并刷新 viewer。
+start_research_followup_poll = function(ui, job, question)
+  local rp = job.research_params or {}
+  local task = make_research_task(rp.text or job.highlighted_text, question,
+                                  rp.action, rp.highlighted_text or job.highlighted_text,
+                                  rp.doc_title, rp.doc_author, rp.doc_file_sha256,
+                                  rp.doc_location)
+
+  local pid, read_fd = ffiutil.runInSubProcess(task, true)
+  if not pid then
+    UIManager:show(InfoMessage:new {
+      text    = _("无法启动深度研究追问（系统资源不足）。"),
+      timeout = 3,
+    })
+    return
+  end
+
+  local interval = POLL_START
+  local function poll()
+    local is_done  = ffiutil.isSubProcessDone(pid)
+    local has_data = read_fd and ffiutil.getNonBlockingReadSize(read_fd) ~= 0
+
+    if is_done or has_data then
+      local raw = (read_fd and ffiutil.readAllFromFD(read_fd)) or ""
+      local appended
+      if raw ~= "" then
+        local ok, data = pcall(json.decode, raw)
+        if ok and type(data) == "table" and data.status == "done"
+            and type(data.text) == "string" then
+          appended = data.text
+        end
+      end
+      if not is_done then
+        UIManager:scheduleIn(2, function() ffiutil.isSubProcessDone(pid) end)
+      end
+
+      if appended then
+        job.research_blocks = job.research_blocks or {}
+        table.insert(job.research_blocks, appended)
+        job.result_text = (job.result_text or "") .. "\n\n" .. appended
+        if job.viewer and type(job.viewer.update) == "function" then
+          pcall(function() job.viewer:update(job.result_text) end)
+        end
+      else
+        UIManager:show(InfoMessage:new {
+          text    = _("深度研究追问失败。"),
+          timeout = 3,
+        })
+      end
+    else
+      interval = math.min(interval * POLL_GROWTH, POLL_MAX)
+      UIManager:scheduleIn(interval, poll)
+    end
+  end
+
+  UIManager:scheduleIn(interval, poll)
 end
 
 -- 显示结果列表对话框（"稍后查看"入口）

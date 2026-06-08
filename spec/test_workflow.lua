@@ -12,8 +12,9 @@ H.reset("caudex.workflow", "caudex.background_jobs", "caudex.ai_client",
 
 local bj_calls = {}
 package.loaded["caudex.background_jobs"] = {
-  submit_summary    = function(...) table.insert(bj_calls, { kind="summary", n = select("#",...) }) end,
-  submit_analyze    = function(...) table.insert(bj_calls, { kind="analyze", n = select("#",...) }) end,
+  submit_summary    = function(...) table.insert(bj_calls, { kind="summary",  n = select("#",...), args = {...} }) end,
+  submit_analyze    = function(...) table.insert(bj_calls, { kind="analyze",  n = select("#",...), args = {...} }) end,
+  submit_research   = function(...) table.insert(bj_calls, { kind="research", n = select("#",...), args = {...} }) end,
   show_results_menu = function() end,
 }
 
@@ -206,33 +207,16 @@ for _, w in ipairs(spy.shown) do
 end
 H.is_true("ask() successful fork: CaudexViewer shown immediately", ask_viewer_shown)
 
--- ── research() → /ai/research/stream 深度研究流 ───────────────────────────
+-- ── research() → 后台任务（BackgroundJobs.submit_research）────────────────
 
--- research() with empty text should show error and NOT fork
-fork_should_fail = false
-fork_calls = {}
-stream_ask_calls._last_error = nil
-H.no_error("research() with empty text does not crash", function()
-  Workflow2.research(fake_ui, { term = "", highlighted_text = "" }, "")
-end)
-H.eq("research() empty text: no fork", #fork_calls, 0)
-H.is_true("research() empty text: error shown",
-          stream_ask_calls._last_error ~= nil)
-
--- research() successful fork: opens viewer immediately
-fork_should_fail = false
-fork_calls = {}
-spy.shown = {}
-H.no_error("research() successful fork runs without error", function()
-  Workflow2.research(fake_ui, {
+-- research() 现在像 summarize/analyze 一样委托给后台任务，不在前台 fork 流式。
+bj_calls = {}
+H.no_error("research() runs without error", function()
+  Workflow.research(fake_ui, {
     term     = "hello",
     question = "focus?",
     action   = "analyze",
   }, "hello")
 end)
-H.eq("research() successful fork: forked once", #fork_calls, 1)
-local research_viewer_shown = false
-for _, w in ipairs(spy.shown) do
-  if w._type == "CaudexViewer" then research_viewer_shown = true end
-end
-H.is_true("research() successful fork: CaudexViewer shown immediately", research_viewer_shown)
+H.eq("research() delegates to BackgroundJobs", #bj_calls, 1)
+H.eq("research() kind is 'research'", bj_calls[1] and bj_calls[1].kind, "research")

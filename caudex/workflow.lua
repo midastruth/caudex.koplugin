@@ -525,26 +525,14 @@ function Workflow.ask(ui, options, default_highlighted)
   }
 end
 
--- ── Deep Research（深度研究）→ /ai/research/stream 结构化推理流 ────────────────
+-- ── Deep Research（深度研究）→ 后台执行 ──────────────────────────────────────
+-- 提交到后台子进程；立即返回，不阻塞 UI。完成后通过顶部通知提示，
+-- 打开的结果 viewer 支持继续追问与添加到高亮笔记。
 -- options: term/highlighted_text, question, action, viewer_title
 function Workflow.research(ui, options, default_highlighted)
-  run_stream_workflow {
-    ui                  = ui,
-    options             = options,
-    default_highlighted = default_highlighted,
-    stream_fn           = AiClient.streamResearch,
-    tmp_prefix          = "/tmp/caudex_research",
-    placeholder         = _("正在进行深度研究…"),
-    restart = function(ui2, opts, trimmed, default_hl, text)
-      Workflow.research(ui2, {
-        term             = text,
-        highlighted_text = opts.highlighted_text or default_hl,
-        question         = trimmed,
-        action           = opts.action,
-        viewer_title     = opts.viewer_title or _("深度研究"),
-      }, default_hl)
-    end,
-  }
+  local doc_title, doc_author, doc_file_sha256 = get_doc_props(ui)
+  BackgroundJobs.submit_research(ui, options, default_highlighted, doc_title, doc_author,
+                                 doc_file_sha256, get_doc_location(ui))
 end
 
 return Workflow

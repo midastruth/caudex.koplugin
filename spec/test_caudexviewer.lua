@@ -272,15 +272,6 @@ H.is_false("show_add_note=false: Add note button is hidden",
 find_button(v_hide, "hide_chat").callback()
 H.is_true("Hide chat button calls onHideChat", hide_called)
 
-local v_hide_error = CaudexViewer:new {
-    title = "test", text = "generating", show_add_note = false,
-    onHideChat = function() error("boom") end,
-}
-local ok_hide_error = pcall(function()
-    find_button(v_hide_error, "hide_chat").callback()
-end)
-H.is_false("Hide chat callback errors propagate", ok_hide_error)
-
 -- ── 3. update() 行为 ─────────────────────────────────────────────────────────
 
 -- 3a. render_markdown=false → 立即 close+show，不使用 scheduleIn

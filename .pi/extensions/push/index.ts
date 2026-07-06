@@ -326,7 +326,7 @@ PY
 
   # Write new version into _meta.lua (KOReader plugin manifest).
   if [ -f _meta.lua ]; then
-    sed -i -E "s/(version[[:space:]]*=[[:space:]]*\")[^\"]*(\")/\\1$RELEASE_VERSION\\2/" _meta.lua
+    sed -E -i '' "s/(version[[:space:]]*=[[:space:]]*\")[^\"]*(\")/\\1$RELEASE_VERSION\\2/" _meta.lua
     echo "Updated _meta.lua → version = \"$RELEASE_VERSION\""
   fi
 

@@ -32,8 +32,8 @@ package.loaded["caudex.highlight"] = {
 }
 
 package.loaded["caudex.config"] = {
-  -- 不返回翻译目标 → 不应该出现 Dictionary 按钮
-  get_translate_target = function() return nil end,
+  -- 不返回词典语言 → 不应该出现 Dictionary 按钮
+  get_dictionary_language = function() return nil end,
 }
 
 package.loaded["caudex.util"] = {

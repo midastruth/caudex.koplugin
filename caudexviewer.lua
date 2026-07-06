@@ -80,6 +80,7 @@ local CaudexViewer = InputContainer:extend {
   onAddToNote = nil,                           -- 添加笔记按钮回调函数
   onHideChat = nil,                            -- 隐藏聊天按钮回调函数（AI 生成中替代"添加笔记"）
   show_add_note = true,                        -- 是否显示"添加笔记"按钮（AI 流式回答中应设为 false 隐藏该按钮）
+  close_highlight_on_close = true,             -- 关闭 viewer 时是否同时关闭当前高亮上下文
 
   -- Markdown 渲染选项
   render_markdown = false,                     -- 是否渲染 Markdown（需要 ScrollHtmlWidget）
@@ -100,6 +101,43 @@ function CaudexViewer._shouldUseHtml(text, render_markdown, markdown_max_size)
     if type(text) ~= "string" or text == "" then return false end
     if #text > (markdown_max_size or 131072) then return false end
     return true
+end
+
+function CaudexViewer:_copyOptionsWithText(text)
+  return {
+    ui = self.ui,
+    title = self.title,
+    text = text,
+    width = self.width,
+    height = self.height,
+    buttons_table = self.buttons_table,
+    add_default_buttons = self.add_default_buttons,
+    default_hold_callback = self.default_hold_callback,
+    find_centered_lines_count = self.find_centered_lines_count,
+    alignment = self.alignment,
+    justified = self.justified,
+    lang = self.lang,
+    para_direction_rtl = self.para_direction_rtl,
+    auto_para_direction = self.auto_para_direction,
+    alignment_strict = self.alignment_strict,
+    title_face = self.title_face,
+    title_multilines = self.title_multilines,
+    title_shrink_font_to_fit = self.title_shrink_font_to_fit,
+    text_face = self.text_face,
+    fgcolor = self.fgcolor,
+    text_padding = self.text_padding,
+    text_margin = self.text_margin,
+    button_padding = self.button_padding,
+    render_markdown = self.render_markdown,
+    markdown_max_size = self.markdown_max_size,
+    onAskQuestion = self.onAskQuestion,
+    onAddToNote = self.onAddToNote,
+    onHideChat = self.onHideChat,
+    show_add_note = self.show_add_note,
+    close_callback = self.close_callback,
+    text_selection_callback = self.text_selection_callback,
+    close_highlight_on_close = self.close_highlight_on_close,
+  }
 end
 
 --[[--
@@ -284,8 +322,12 @@ function CaudexViewer:init()
       hold_callback = self.default_hold_callback,
     })
   end
-  -- 合并自定义按钮和默认按钮
-  local buttons = self.buttons_table or {}
+  -- 合并自定义按钮和默认按钮。注意不要原地修改 self.buttons_table，
+  -- 否则 update() 重建 viewer 或外部复用按钮表时会重复追加默认按钮。
+  local buttons = {}
+  if type(self.buttons_table) == "table" then
+    for i, row in ipairs(self.buttons_table) do buttons[i] = row end
+  end
   if self.add_default_buttons or not self.buttons_table then
     table.insert(buttons, default_buttons)
   end
@@ -342,6 +384,23 @@ function CaudexViewer:init()
       -- ScrollHtmlWidget 缺少 scrollToTop/scrollToBottom，补上适配器
       html_w.scrollToTop    = function(w) w:scrollToRatio(0) end
       html_w.scrollToBottom = function(w) w:scrollToRatio(1) end
+      if type(html_w.scrollText) ~= "function" then
+        html_w.scrollText = function(w, direction)
+          direction = tonumber(direction) or 0
+          if direction == 0 or not w.htmlbox_widget then return end
+          local page_count = math.max(1, w.htmlbox_widget.page_count or 1)
+          local page_number = math.max(1, math.min(page_count, w.htmlbox_widget.page_number or 1))
+          local next_page = math.max(1, math.min(page_count,
+            page_number + (direction > 0 and 1 or -1)))
+          if next_page == page_number then return end
+          if type(w.htmlbox_widget.setPageNumber) == "function" then
+            w.htmlbox_widget:setPageNumber(next_page)
+          else
+            w.htmlbox_widget.page_number = next_page
+          end
+          if type(w._updateScrollBar) == "function" then w:_updateScrollBar() end
+        end
+      end
       notify_html_scroll_position(html_w)
       self.scroll_text_w = html_w
   end
@@ -438,7 +497,7 @@ function CaudexViewer:askAnotherQuestion()
           is_enter_default = true,               -- 设为默认按钮（回车触发）
           callback = function()
             local input_text = input_dialog:getInputText()  -- 获取输入文本
-            if input_text and input_text ~= "" then        -- 检查非空
+            if input_text and input_text ~= "" and self.onAskQuestion then
               self:onAskQuestion(input_text)               -- 调用提问回调
             end
             UIManager:close(input_dialog)                  -- 关闭对话框
@@ -448,7 +507,7 @@ function CaudexViewer:askAnotherQuestion()
     },
   }
   UIManager:show(input_dialog)    -- 显示输入对话框
-  input_dialog:onShowKeyboard()   -- 自动显示键盘
+  if input_dialog.onShowKeyboard then input_dialog:onShowKeyboard() end   -- 自动显示键盘
 end
 
 --[[--
@@ -503,7 +562,8 @@ function CaudexViewer:onClose()
   self._update_pending = false
   UIManager:close(self)
   -- 后台结果打开的 viewer 没有活跃高亮上下文，安全检查后再调用
-  if self.ui and self.ui.highlight and self.ui.highlight.onClose then
+  if self.close_highlight_on_close ~= false
+      and self.ui and self.ui.highlight and self.ui.highlight.onClose then
     self.ui.highlight:onClose()
   end
   if self.close_callback then
@@ -644,18 +704,7 @@ function CaudexViewer:update(new_text)
   if not self.render_markdown then
     UIManager:close(self)  -- 关闭当前对话框
     -- 创建新的查看器实例
-    local updated_viewer = CaudexViewer:new {
-      ui = self.ui,
-      title = self.title,
-      text = new_text,
-      width = self.width,
-      height = self.height,
-      buttons_table = self.buttons_table,
-      onAskQuestion = self.onAskQuestion,
-      onAddToNote = self.onAddToNote,
-      onHideChat = self.onHideChat,
-      show_add_note = self.show_add_note,
-    }
+    local updated_viewer = CaudexViewer:new(self:_copyOptionsWithText(new_text))
     updated_viewer.scroll_text_w:scrollToBottom()  -- 滚动到新内容底部
     UIManager:show(updated_viewer)  -- 显示更新后的对话框
     return updated_viewer
@@ -673,20 +722,7 @@ function CaudexViewer:update(new_text)
     local text = self._last_update_text
     UIManager:close(self)  -- 关闭当前对话框
     -- 创建新的查看器实例（传递 Markdown 相关参数）
-    local updated_viewer = CaudexViewer:new {
-      ui = self.ui,
-      title = self.title,
-      text = text,
-      width = self.width,
-      height = self.height,
-      buttons_table = self.buttons_table,
-      render_markdown = self.render_markdown,
-      markdown_max_size = self.markdown_max_size,
-      onAskQuestion = self.onAskQuestion,
-      onAddToNote = self.onAddToNote,
-      onHideChat = self.onHideChat,
-      show_add_note = self.show_add_note,
-    }
+    local updated_viewer = CaudexViewer:new(self:_copyOptionsWithText(text))
     updated_viewer.scroll_text_w:scrollToBottom()  -- 滚动到新内容底部
     UIManager:show(updated_viewer)  -- 显示更新后的对话框
   end)

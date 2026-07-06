@@ -42,12 +42,15 @@ function Config.validate()
     "No valid API endpoint configured (set reader_ai_base_url or a non-OpenAI base_url)"
 end
 
--- 返回 translate_to 目标语言，未配置返回 nil
-function Config.get_translate_target()
+-- 返回词典/解释语言，未配置返回 nil
+function Config.get_dictionary_language()
   local cfg = load()
-  if cfg and cfg.features and cfg.features.translate_to
-      and cfg.features.translate_to ~= "" then
-    return cfg.features.translate_to
+  if cfg and cfg.features and type(cfg.features.dictionary_language) == "string"
+      and cfg.features.dictionary_language ~= "" then
+    return cfg.features.dictionary_language
+  end
+  if cfg and type(cfg.language) == "string" and cfg.language ~= "" then
+    return cfg.language
   end
   return nil
 end

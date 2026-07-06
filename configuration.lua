@@ -39,9 +39,6 @@ return {
   language = "zh",
 
   features = {
-    -- 翻译目标语言
-    translate_to = "zh",
-
     -- 词典/解释语言
     dictionary_language = "zh",
   },

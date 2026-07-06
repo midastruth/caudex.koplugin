@@ -10,10 +10,9 @@ local Workflow  = require("caudex.workflow")
 
 local DialogController = {}
 
-local input_dialog  -- 当前活动的输入对话框
-
 function DialogController.show(ui, highlight_source)
   local highlighted_text, highlighted_context = Highlight.extract(highlight_source)
+  local input_dialog  -- 当前活动的输入对话框，仅限本次 show() 调用
 
   local buttons = {
     {
@@ -96,7 +95,8 @@ function DialogController.show(ui, highlight_source)
     end,
   })
 
-  local target_language = Config.get_translate_target()
+  local target_language = type(Config.get_dictionary_language) == "function"
+      and Config.get_dictionary_language() or nil
   if target_language then
     table.insert(buttons, {
       text = _("Dictionary"),
@@ -105,7 +105,7 @@ function DialogController.show(ui, highlight_source)
         Workflow.lookup(ui, {
           term                    = highlighted_text,
           highlighted_text        = highlighted_text,
-          question                = _("Dictionary lookup with ") .. target_language .. _(" translation"),
+          question                = _("Dictionary lookup in ") .. target_language,
           action                  = "dictionary",
           language                = target_language,
           request_language        = "auto",

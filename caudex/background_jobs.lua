@@ -220,6 +220,7 @@ local function open_research_viewer(ui, job)
       onAddToNote     = add_note_callback,
       onHideChat      = hide_chat_callback,
       show_add_note   = not is_pending,
+      close_highlight_on_close = false,
       close_callback  = function()
         if job.viewer == new_viewer then job.viewer = nil end
         if not job.viewer_hidden then job.viewer_dismissed = true end
@@ -266,6 +267,7 @@ local function open_result_viewer(ui, job)
     render_markdown = true,
     onAskQuestion   = on_ask_disabled,
     onAddToNote     = on_add_note_disabled,
+    close_highlight_on_close = false,
   })
 end
 

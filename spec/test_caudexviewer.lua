@@ -272,6 +272,11 @@ H.is_false("show_add_note=false: Add note button is hidden",
 find_button(v_hide, "hide_chat").callback()
 H.is_true("Hide chat button calls onHideChat", hide_called)
 
+local v_noask = CaudexViewer:new { title = "test", text = "no callback" }
+H.no_error("Ask Another without callback does not crash", function()
+    v_noask:askAnotherQuestion()
+end)
+
 -- ── 3. update() 行为 ─────────────────────────────────────────────────────────
 
 -- 3a. render_markdown=false → 立即 close+show，不使用 scheduleIn
@@ -283,6 +288,23 @@ v4:update("updated text")
 H.eq("update() non-md: immediately closes viewer",    #spy.closed,    1)
 H.eq("update() non-md: immediately shows new viewer", #spy.shown,     1)
 H.eq("update() non-md: no scheduleIn used",           #spy.scheduled, 0)
+
+local close_cb = function() end
+local selection_cb = function() end
+local v4b = CaudexViewer:new {
+    title = "t", text = "init", render_markdown = false,
+    close_callback = close_cb,
+    text_selection_callback = selection_cb,
+    close_highlight_on_close = false,
+}
+spy.closed    = {}
+spy.shown     = {}
+spy.scheduled = {}
+v4b:update("preserve callbacks")
+H.eq("update() preserves close_callback", spy.shown[1].close_callback, close_cb)
+H.eq("update() preserves text_selection_callback", spy.shown[1].text_selection_callback, selection_cb)
+H.is_false("update() preserves close_highlight_on_close=false",
+    spy.shown[1].close_highlight_on_close)
 
 -- 3b. render_markdown=true → 走 debounce，使用 scheduleIn
 local v5 = CaudexViewer:new { title = "t", text = "init", render_markdown = true }

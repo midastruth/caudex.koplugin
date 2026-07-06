@@ -63,3 +63,13 @@ with_config({ reader_ai_base_url = "https://primary.example.com",
   local ok, _ = Config.validate()
   H.is_true("reader_ai_base_url wins over empty base_url", ok)
 end)
+
+-- dictionary language prefers features.dictionary_language over global language
+with_config({ language = "en", features = { dictionary_language = "zh" } }, function(Config)
+  H.eq("dictionary_language uses feature setting", Config.get_dictionary_language(), "zh")
+end)
+
+-- dictionary language falls back to global language
+with_config({ language = "en", features = {} }, function(Config)
+  H.eq("dictionary_language falls back to language", Config.get_dictionary_language(), "en")
+end)

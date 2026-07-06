@@ -382,12 +382,16 @@ local function run_stream_workflow(spec)
     pcall(os.remove, tmpfile)
   end
 
+  local function safe_close_viewer(widget)
+    if widget then UIManager:close(widget) end
+  end
+
   local function show_viewer(display_text, callbacks)
     -- AI 仍在回答中（未传入 on_note 回调）时，用"Hide chat"替代"Add note"。
     local has_note_callback = callbacks and callbacks.on_note ~= nil
     local force_show = callbacks and callbacks.force_show
     if chat_hidden and not has_note_callback and not force_show then return end
-    if current_viewer then UIManager:close(current_viewer) end
+    safe_close_viewer(current_viewer)
     if has_note_callback or force_show then chat_hidden = false end
     current_viewer = CaudexViewer:new {
       ui              = ui,
@@ -401,14 +405,15 @@ local function run_stream_workflow(spec)
       onAddToNote   = has_note_callback and callbacks.on_note or nil,
       onHideChat    = (not has_note_callback) and function(_)
         chat_hidden = true
-        if current_viewer then
-          UIManager:close(current_viewer)
-          current_viewer = nil
-        end
-        UIManager:show(InfoMessage:new {
-          text    = _("聊天已隐藏，回答完成后会自动显示。"),
-          timeout = 2,
-        })
+        local hidden_viewer = current_viewer
+        current_viewer = nil
+        UIManager:scheduleIn(0, function()
+          safe_close_viewer(hidden_viewer)
+          UIManager:show(InfoMessage:new {
+            text    = _("聊天已隐藏，回答完成后会自动显示。"),
+            timeout = 2,
+          })
+        end)
       end or nil,
       show_add_note = has_note_callback,
     }
@@ -426,7 +431,7 @@ local function run_stream_workflow(spec)
 
   if not pid then
     polling_active = false
-    UIManager:close(current_viewer)
+    safe_close_viewer(current_viewer)
     pcall(os.remove, tmpfile)
     Errors.show(_("无法启动流式查询（系统资源不足）。"))
     return
@@ -447,7 +452,7 @@ local function run_stream_workflow(spec)
     if error_pos then
       stop_and_cleanup()
       stream_complete = true
-      UIManager:close(current_viewer)
+      safe_close_viewer(current_viewer)
       Errors.show_request_error(raw:sub(error_pos + #ERROR_MARKER), _("Caudex"))
       return
     end
@@ -486,7 +491,7 @@ local function run_stream_workflow(spec)
         on_note = function(_)
           if ui.highlight and ui.highlight.addNote then
             ui.highlight:addNote(final_text)
-            UIManager:close(current_viewer)
+            safe_close_viewer(current_viewer)
             if ui.highlight.onClose then ui.highlight:onClose() end
           end
         end,
@@ -510,7 +515,7 @@ local function run_stream_workflow(spec)
           force_show = true,
         })
       else
-        UIManager:close(current_viewer)
+        safe_close_viewer(current_viewer)
         Errors.show(_("Caudex 流式请求异常结束。"))
       end
       return

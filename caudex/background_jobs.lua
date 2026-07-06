@@ -24,6 +24,10 @@ local POLL_START   = 1.0   -- 首次轮询间隔（秒）
 local POLL_MAX     = 6.0   -- 最大轮询间隔（秒）
 local POLL_GROWTH  = 1.5   -- 每轮乘以该系数
 
+local function safe_close_widget(widget)
+  if widget then UIManager:close(widget) end
+end
+
 -- 前向声明：深度研究的子任务构造器与追问轮询，open_result_viewer 会用到它们，
 -- 但其定义位于文件后部，因此先声明本地名以便闭包通过 upvalue 捕获。
 local make_research_task
@@ -152,7 +156,7 @@ local function open_research_viewer(ui, job)
     end
     local ok = pcall(function() hl:addNote(job.result_text) end)
     if ok then
-      UIManager:close(viewer)
+      safe_close_widget(viewer)
       if type(hl.onClose) == "function" then pcall(function() hl:onClose() end) end
     else
       UIManager:show(InfoMessage:new {
@@ -165,16 +169,16 @@ local function open_research_viewer(ui, job)
   local function handle_hide_chat(_viewer)
     job.viewer_hidden = true
     job.viewer_dismissed = false
-    if job.viewer then
-      UIManager:close(job.viewer)
-      job.viewer = nil
-    elseif viewer then
-      UIManager:close(viewer)
-    end
-    UIManager:show(InfoMessage:new {
-      text    = _("聊天已隐藏，回答完成后会自动显示。"),
-      timeout = 2,
-    })
+    local hidden_viewer = job.viewer or viewer
+    job.viewer = nil
+    viewer = nil
+    UIManager:scheduleIn(0, function()
+      safe_close_widget(hidden_viewer)
+      UIManager:show(InfoMessage:new {
+        text    = _("聊天已隐藏，回答完成后会自动显示。"),
+        timeout = 2,
+      })
+    end)
   end
 
   local function handle_follow_up(_viewer, input)
@@ -202,7 +206,7 @@ local function open_research_viewer(ui, job)
       return
     end
 
-    if job.viewer then UIManager:close(job.viewer) end
+    safe_close_widget(job.viewer)
     local is_pending = job.followup_pending == true
     local add_note_callback = handle_add_note
     local hide_chat_callback = nil

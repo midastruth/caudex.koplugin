@@ -129,6 +129,11 @@ end
 local function open_research_viewer(ui, job)
   local CaudexViewer = require("caudexviewer")
   local viewer
+  local refresh_viewer
+
+  -- 显式打开结果时清除上一次手动关闭/隐藏状态；后台自动刷新仍会尊重之后的关闭。
+  job.viewer_dismissed = false
+  job.viewer_hidden = false
 
   -- 保存笔记：优先写入提交时捕获的高亮选区快照，脱离当前选区也能落笔记。
   local function handle_add_note(_viewer)
@@ -157,6 +162,21 @@ local function open_research_viewer(ui, job)
     end
   end
 
+  local function handle_hide_chat(_viewer)
+    job.viewer_hidden = true
+    job.viewer_dismissed = false
+    if job.viewer then
+      UIManager:close(job.viewer)
+      job.viewer = nil
+    elseif viewer then
+      UIManager:close(viewer)
+    end
+    UIManager:show(InfoMessage:new {
+      text    = _("聊天已隐藏，回答完成后会自动显示。"),
+      timeout = 2,
+    })
+  end
+
   local function handle_follow_up(_viewer, input)
     local trimmed = trim_text(input)
     if trimmed == "" then return end
@@ -164,19 +184,56 @@ local function open_research_viewer(ui, job)
       text    = _("正在进行深度研究…完成后会自动更新。"),
       timeout = 3,
     })
+    -- AI 正在回答追问期间，用"Hide chat"替代"Add note"（内容尚未稳定）。
+    job.followup_pending = true
+    job.viewer_hidden = false
+    job.viewer_dismissed = false
+    if type(refresh_viewer) == "function" then refresh_viewer() end
     start_research_followup_poll(ui, job, trimmed)
   end
 
-  viewer = CaudexViewer:new {
-    ui              = ui,
-    title           = job.viewer_title or _("深度研究"),
-    text            = job.result_text,
-    render_markdown = true,
-    onAskQuestion   = handle_follow_up,
-    onAddToNote     = handle_add_note,
-  }
-  job.viewer = viewer
-  UIManager:show(viewer)
+  refresh_viewer = function()
+    -- 普通关闭表示用户已明确收起该聊天；后台追问完成后不要再自动弹出。
+    -- Hide chat 使用 job.viewer_hidden=true，仍允许完成后自动显示最终结果。
+    if job.viewer_dismissed and not job.viewer_hidden then return end
+    if job.viewer and job.viewer._closed and not job.viewer_hidden then
+      job.viewer = nil
+      job.viewer_dismissed = true
+      return
+    end
+
+    if job.viewer then UIManager:close(job.viewer) end
+    local is_pending = job.followup_pending == true
+    local add_note_callback = handle_add_note
+    local hide_chat_callback = nil
+    if is_pending then
+      add_note_callback = nil
+      hide_chat_callback = handle_hide_chat
+    end
+    local new_viewer
+    new_viewer = CaudexViewer:new {
+      ui              = ui,
+      title           = job.viewer_title or _("深度研究"),
+      text            = job.result_text,
+      render_markdown = true,
+      onAskQuestion   = handle_follow_up,
+      onAddToNote     = add_note_callback,
+      onHideChat      = hide_chat_callback,
+      show_add_note   = not is_pending,
+      close_callback  = function()
+        if job.viewer == new_viewer then job.viewer = nil end
+        if not job.viewer_hidden then job.viewer_dismissed = true end
+      end,
+    }
+    viewer = new_viewer
+    job.viewer = new_viewer
+    job.viewer_hidden = false
+    job.viewer_dismissed = false
+    UIManager:show(new_viewer)
+  end
+
+  job.refresh_viewer = refresh_viewer
+  refresh_viewer()
 end
 
 -- 打开后台结果 viewer。深度研究支持追问/存笔记；摘要/分析为只读结果。
@@ -553,6 +610,8 @@ start_research_followup_poll = function(ui, job, question)
 
   local pid, read_fd = ffiutil.runInSubProcess(task, true)
   if not pid then
+    job.followup_pending = false
+    if type(job.refresh_viewer) == "function" then pcall(job.refresh_viewer) end
     UIManager:show(InfoMessage:new {
       text    = _("无法启动深度研究追问（系统资源不足）。"),
       timeout = 3,
@@ -579,18 +638,24 @@ start_research_followup_poll = function(ui, job, question)
         UIManager:scheduleIn(2, function() ffiutil.isSubProcessDone(pid) end)
       end
 
+      -- 无论成功与否，追问子进程已结束，恢复"添加笔记"按钮。
+      job.followup_pending = false
+
       if appended then
         job.research_blocks = job.research_blocks or {}
         table.insert(job.research_blocks, appended)
         job.result_text = (job.result_text or "") .. "\n\n" .. appended
-        if job.viewer and type(job.viewer.update) == "function" then
-          pcall(function() job.viewer:update(job.result_text) end)
-        end
       else
         UIManager:show(InfoMessage:new {
           text    = _("深度研究追问失败。"),
           timeout = 3,
         })
+      end
+
+      if type(job.refresh_viewer) == "function" then
+        pcall(job.refresh_viewer)
+      elseif job.viewer and type(job.viewer.update) == "function" then
+        pcall(function() job.viewer:update(job.result_text) end)
       end
     else
       interval = math.min(interval * POLL_GROWTH, POLL_MAX)

@@ -204,6 +204,125 @@ H.no_error("research add-to-note does not crash", function()
 end)
 H.eq("research add-to-note saved the result text", note_saved, "deep research result")
 
+-- ── Scenario 7: closing pending follow-up viewer keeps it dismissed ────────
+
+local function install_followup_viewer_spy(created)
+  package.loaded["caudexviewer"] = {
+    new = function(_, args)
+      local obj = {
+        _type          = "CaudexViewer",
+        text           = args.text,
+        show_add_note  = args.show_add_note,
+        onAskQuestion  = args.onAskQuestion,
+        onAddToNote    = args.onAddToNote,
+        onHideChat     = args.onHideChat,
+        close_callback = args.close_callback,
+        update = function(self, t) self.text = t end,
+      }
+      obj.onClose = function(self)
+        self._closed = true
+        if self.close_callback then self.close_callback() end
+      end
+      table.insert(created, obj)
+      return obj
+    end,
+  }
+end
+
+local function count_shown_caudex_viewers()
+  local n = 0
+  for _, w in ipairs(spy.shown) do
+    if w._type == "CaudexViewer" then n = n + 1 end
+  end
+  return n
+end
+
+local function open_first_research_viewer(BJ, ui)
+  spy.shown = {}
+  BJ.show_results_menu(ui)
+  local btn = spy.shown[1] and spy.shown[1].buttons[1][1]
+  if btn then btn.callback() end
+end
+
+local followup_raw = '{"status":"done","text":"initial research result"}'
+spy.ffiutil.readAllFromFD = function(_fd) return followup_raw end
+package.loaded["json"].decode = function(raw)
+  if raw and raw:find("follow%-up", 1, false) then
+    return { status = "done", text = "follow-up result" }
+  end
+  return { status = "done", text = "initial research result" }
+end
+
+local pending_schedules = {}
+local defer_schedules = false
+spy.UIManager.scheduleIn = function(_, delay, fn)
+  if defer_schedules then
+    table.insert(pending_schedules, { delay = delay, fn = fn })
+  elseif fn then
+    fn()
+  end
+end
+
+local dismissed_viewers = {}
+install_followup_viewer_spy(dismissed_viewers)
+H.reset("caudex.background_jobs")
+local BJ4 = require("caudex.background_jobs")
+BJ4.submit_research(research_ui, { term = "deep topic" }, "deep topic", "Book", "Author")
+open_first_research_viewer(BJ4, research_ui)
+local initial_viewer = dismissed_viewers[1]
+H.is_true("follow-up dismissal setup opened initial viewer", initial_viewer ~= nil)
+
+spy.shown = {}
+pending_schedules = {}
+defer_schedules = true
+followup_raw = '{"status":"done","text":"follow-up result"}'
+H.no_error("starting follow-up creates pending viewer", function()
+  initial_viewer:onAskQuestion("more?")
+end)
+local pending_viewer = dismissed_viewers[2]
+H.is_true("follow-up pending viewer was created", pending_viewer ~= nil)
+H.eq("pending follow-up viewer is shown once", count_shown_caudex_viewers(), 1)
+
+pending_viewer:onClose()
+H.no_error("follow-up completion after normal close does not crash", function()
+  pending_schedules[1].fn()
+end)
+H.eq("normal close: follow-up completion does not recreate viewer", #dismissed_viewers, 2)
+H.eq("normal close: follow-up completion does not show viewer", count_shown_caudex_viewers(), 1)
+
+defer_schedules = false
+
+-- ── Scenario 8: Hide chat still reopens when follow-up completes ───────────
+
+local hidden_viewers = {}
+install_followup_viewer_spy(hidden_viewers)
+H.reset("caudex.background_jobs")
+local BJ5 = require("caudex.background_jobs")
+followup_raw = '{"status":"done","text":"initial research result"}'
+BJ5.submit_research(research_ui, { term = "deep topic" }, "deep topic", "Book", "Author")
+open_first_research_viewer(BJ5, research_ui)
+initial_viewer = hidden_viewers[1]
+H.is_true("hide chat setup opened initial viewer", initial_viewer ~= nil)
+
+spy.shown = {}
+pending_schedules = {}
+defer_schedules = true
+followup_raw = '{"status":"done","text":"follow-up result"}'
+initial_viewer:onAskQuestion("more?")
+pending_viewer = hidden_viewers[2]
+H.is_true("hide chat pending viewer was created", pending_viewer ~= nil)
+H.no_error("hide chat callback does not crash", function()
+  pending_viewer:onHideChat()
+end)
+pending_schedules[1].fn()
+H.eq("hide chat: follow-up completion recreates final viewer", #hidden_viewers, 3)
+H.eq("hide chat: follow-up completion shows final viewer", count_shown_caudex_viewers(), 2)
+
+defer_schedules = false
+spy.UIManager.scheduleIn = function(_, delay, fn)
+  if fn then fn() end
+end
+
 -- Restore default CaudexViewer mock for any later specs.
 package.loaded["caudexviewer"] = nil
 

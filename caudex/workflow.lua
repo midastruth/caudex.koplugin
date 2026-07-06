@@ -366,6 +366,7 @@ local function run_stream_workflow(spec)
   local current_viewer  = nil
   local polling_active  = false
   local stream_complete = false
+  local chat_hidden     = false
 
   local stream_params = {
     text        = text,
@@ -382,7 +383,12 @@ local function run_stream_workflow(spec)
   end
 
   local function show_viewer(display_text, callbacks)
+    -- AI 仍在回答中（未传入 on_note 回调）时，用"Hide chat"替代"Add note"。
+    local has_note_callback = callbacks and callbacks.on_note ~= nil
+    local force_show = callbacks and callbacks.force_show
+    if chat_hidden and not has_note_callback and not force_show then return end
     if current_viewer then UIManager:close(current_viewer) end
+    if has_note_callback or force_show then chat_hidden = false end
     current_viewer = CaudexViewer:new {
       ui              = ui,
       title           = options.viewer_title or _("Caudex"),
@@ -392,9 +398,19 @@ local function run_stream_workflow(spec)
       onAskQuestion   = callbacks and callbacks.on_ask or function(_, _)
         UIManager:show(InfoMessage:new { text = _("请等待回答完成。"), timeout = 2 })
       end,
-      onAddToNote = callbacks and callbacks.on_note or function(_)
-        UIManager:show(InfoMessage:new { text = _("请等待回答完成。"), timeout = 2 })
-      end,
+      onAddToNote   = has_note_callback and callbacks.on_note or nil,
+      onHideChat    = (not has_note_callback) and function(_)
+        chat_hidden = true
+        if current_viewer then
+          UIManager:close(current_viewer)
+          current_viewer = nil
+        end
+        UIManager:show(InfoMessage:new {
+          text    = _("聊天已隐藏，回答完成后会自动显示。"),
+          timeout = 2,
+        })
+      end or nil,
+      show_add_note = has_note_callback,
     }
     UIManager:show(current_viewer)
   end
@@ -491,6 +507,7 @@ local function run_stream_workflow(spec)
       if last_content ~= "" then
         show_viewer(last_content .. "\n\n[Stream ended unexpectedly]", {
           on_close = function() end,
+          force_show = true,
         })
       else
         UIManager:close(current_viewer)

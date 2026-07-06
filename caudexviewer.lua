@@ -78,6 +78,8 @@ local CaudexViewer = InputContainer:extend {
   -- 回调函数
   onAskQuestion = nil,                         -- 提问按钮回调函数
   onAddToNote = nil,                           -- 添加笔记按钮回调函数
+  onHideChat = nil,                            -- 隐藏聊天按钮回调函数（AI 生成中替代"添加笔记"）
+  show_add_note = true,                        -- 是否显示"添加笔记"按钮（AI 流式回答中应设为 false 隐藏该按钮）
 
   -- Markdown 渲染选项
   render_markdown = false,                     -- 是否渲染 Markdown（需要 ScrollHtmlWidget）
@@ -260,15 +262,28 @@ function CaudexViewer:init()
       hold_callback = self.default_hold_callback,
       allow_hold_when_disabled = true,
     },
-    {
+  }
+  -- AI 仍在流式回答时，"添加笔记"没有意义（内容尚未确定），因此隐藏该按钮，
+  -- 而不是显示后点击再提示"请等待回答完成"。
+  if self.show_add_note ~= false then
+    table.insert(default_buttons, {
       text = _("Add note"),  -- "添加笔记"按钮
       id = "add_note",
       callback = function()
         self:addToNote()  -- 调用添加笔记函数
       end,
       hold_callback = self.default_hold_callback,
-    },
-  }
+    })
+  elseif self.onHideChat then
+    table.insert(default_buttons, {
+      text = _("Hide chat"),  -- AI 生成中替代"添加笔记"的隐藏聊天按钮
+      id = "hide_chat",
+      callback = function()
+        self:hideChat()  -- 调用隐藏聊天函数
+      end,
+      hold_callback = self.default_hold_callback,
+    })
+  end
   -- 合并自定义按钮和默认按钮
   local buttons = self.buttons_table or {}
   if self.add_default_buttons or not self.buttons_table then
@@ -387,6 +402,15 @@ end
 function CaudexViewer:addToNote()
   if self.onAddToNote then
     self:onAddToNote()
+  end
+end
+
+--[[--
+隐藏聊天界面 - 调用外部回调函数处理隐藏逻辑
+]]
+function CaudexViewer:hideChat()
+  if self.onHideChat then
+    self:onHideChat()
   end
 end
 
@@ -629,10 +653,12 @@ function CaudexViewer:update(new_text)
       buttons_table = self.buttons_table,
       onAskQuestion = self.onAskQuestion,
       onAddToNote = self.onAddToNote,
+      onHideChat = self.onHideChat,
+      show_add_note = self.show_add_note,
     }
     updated_viewer.scroll_text_w:scrollToBottom()  -- 滚动到新内容底部
     UIManager:show(updated_viewer)  -- 显示更新后的对话框
-    return
+    return updated_viewer
   end
   -- Markdown 路径：debounce 200ms，防止流式更新反复触发 MuPDF 排版
   self._last_update_text = new_text
@@ -658,6 +684,8 @@ function CaudexViewer:update(new_text)
       markdown_max_size = self.markdown_max_size,
       onAskQuestion = self.onAskQuestion,
       onAddToNote = self.onAddToNote,
+      onHideChat = self.onHideChat,
+      show_add_note = self.show_add_note,
     }
     updated_viewer.scroll_text_w:scrollToBottom()  -- 滚动到新内容底部
     UIManager:show(updated_viewer)  -- 显示更新后的对话框

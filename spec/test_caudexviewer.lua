@@ -75,9 +75,10 @@ local function make_widget(type_name)
 end
 
 package.loaded["ui/widget/buttontable"] = {
-    new = function(_, _args)
+    new = function(_, args)
         return {
             _type       = "ButtonTable",
+            buttons     = args and args.buttons or nil,
             getSize     = function() return { h = 50, w = 100 } end,
             getButtonById = function() return nil end,
         }
@@ -250,6 +251,26 @@ H.eq("text > markdown_max_size: falls back to ScrollTextWidget",
     v3.scroll_text_w._type, "ScrollTextWidget")
 H.eq("text > markdown_max_size: MarkdownRenderer.toHtml NOT called",
     #mr_calls, 0)
+
+local function find_button(viewer, id)
+    for _, row in ipairs(viewer.button_table.buttons or {}) do
+        for _, btn in ipairs(row) do
+            if btn.id == id then return btn end
+        end
+    end
+end
+
+local hide_called = false
+local v_hide = CaudexViewer:new {
+    title = "test", text = "generating", show_add_note = false,
+    onHideChat = function() hide_called = true end,
+}
+H.is_true("show_add_note=false: Hide chat button is shown",
+    find_button(v_hide, "hide_chat") ~= nil)
+H.is_false("show_add_note=false: Add note button is hidden",
+    find_button(v_hide, "add_note") ~= nil)
+find_button(v_hide, "hide_chat").callback()
+H.is_true("Hide chat button calls onHideChat", hide_called)
 
 -- ── 3. update() 行为 ─────────────────────────────────────────────────────────
 
